@@ -40,6 +40,8 @@ data class ChatState(
     val compacting: Boolean = false,
     val notice: String? = null,
     val error: String? = null,
+    /** The bot profile a Bot Chat runs in (null for an ordinary chat of the dashboard profile). */
+    val botProfile: String? = null,
 )
 
 /** A model switch the gateway wants confirmed (`confirm_required`). */

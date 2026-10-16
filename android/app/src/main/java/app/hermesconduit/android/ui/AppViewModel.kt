@@ -118,6 +118,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application), Ch
         viewModelScope.launch { hermes.events.collect(::onEvent) }
         viewModelScope.launch {
             hermes.connected.collect {
+                launch { app.hermesconduit.android.ui.bots.BotRoster.refresh(hermes) }
                 refreshLiveStatus()
                 // Reattach to the open chat with the new runtime, reloading the
                 // transcript since events were missed while disconnected.
@@ -278,6 +279,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application), Ch
         if (event is StreamEvent.Approval) _sessions.update { it.copy(needsApproval = it.needsApproval + event.sessionId) }
         if (event is StreamEvent.RequestCancelled && event.method == "approval") _sessions.update { it.copy(needsApproval = it.needsApproval - event.sessionId) }
         val chat = _chat.value
+        // A Bot Chat keeps the bot's name; its wire title stays "Bot Chat".
+        if (event is StreamEvent.Title && chat.botProfile != null) return
         val addressed = event.sessionId.isEmpty() || event.sessionId == chat.runtimeId ||
             (event is StreamEvent.Title && event.storedSessionId == chat.sessionId)
         if (!addressed) return
@@ -379,7 +382,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application), Ch
                 if (!result.hasMore) break
                 offset = result.nextOffset
             }
+            val roster = app.hermesconduit.android.ui.bots.BotRoster.bots.value
             val sorted = all.distinctBy { it.id }
+                .filterNot { app.hermesconduit.android.model.BotChatHygiene.isCanonicalBotChatRow(it, roster) }
                 .sortedWith(compareByDescending<SessionSummary> { it.pinned }.thenByDescending { it.lastActiveMs ?: 0 })
             _sessions.value = SessionsState(sorted)
         } catch (e: AuthExpiredException) {
@@ -443,10 +448,33 @@ class AppViewModel(application: Application) : AndroidViewModel(application), Ch
         viewModelScope.launch { resume(session.id, reloadHistory = true) }
     }
 
+    /** Opens a bot's canonical Bot Chat (resolved by the Bots screen) in the bot's own profile. */
+    fun openBotChat(resumeId: String, registryId: String, profile: String, label: String) {
+        hermes.scopeSession(resumeId, profile)
+        hermes.scopeSession(registryId, profile)
+        _chat.value = ChatState(sessionId = resumeId, title = label, loading = true, botProfile = profile)
+        viewModelScope.launch { resume(resumeId, reloadHistory = true) }
+    }
+
+    /** Leaves the open chat when it is [profile]'s Bot Chat (the bot was deleted). */
+    fun leaveBotChat(profile: String) {
+        if (_chat.value.botProfile.equals(profile, ignoreCase = true)) newChat()
+    }
+
+    fun refreshProfilesAsync() {
+        viewModelScope.launch { refreshProfiles() }
+    }
+
+    /** The profile the open conversation runs in: the bot's inside a Bot Chat. */
+    private val conversationProfile: String get() = _chat.value.botProfile ?: hermes.profile.value
+
+    override fun mentionCandidates(): List<app.hermesconduit.android.model.MentionAutocomplete.Candidate> =
+        app.hermesconduit.android.model.MentionAutocomplete.botCandidates(app.hermesconduit.android.ui.bots.BotRoster.bots.value, conversationProfile)
+
     private suspend fun resume(sessionId: String, reloadHistory: Boolean) {
         if (reloadHistory) {
             try {
-                val page = hermes.rest { it.messages(sessionId, hermes.profile.value) }
+                val page = hermes.rest { it.messages(sessionId, conversationProfile) }
                 _chat.update {
                     if (it.sessionId != sessionId) it
                     else it.copy(messages = page.messages, hasEarlier = page.hasMore, loadedOffset = HISTORY_PAGE)
@@ -518,6 +546,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application), Ch
      */
     private fun maybeGenerateTitle(chat: ChatState) {
         val runtime = chat.runtimeId ?: return
+        if (chat.botProfile != null) return
         val users = chat.messages.filter { it.role == MessageRole.USER }
         val assistant = chat.messages.lastOrNull { it.role == MessageRole.ASSISTANT && it.content.isNotBlank() } ?: return
         if (users.size != 1 || !titledSessions.add(runtime)) return
@@ -676,6 +705,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application), Ch
 
     /** Runs a `/command`; returns false when [text] isn't one. */
     override fun runSlash(text: String): Boolean {
+        // The forever chat: /new and /reset compact a Bot Chat instead of forking it.
+        BotMentionsHook.reroute(text, _chat.value)?.let { return runSlash(it) }
         val (name, argument, cleaned) = MessageNormalizer.parseSlash(text) ?: return false
         appendLocal(MessageRole.USER, text.trim())
         when (name) {
@@ -822,7 +853,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application), Ch
         _chat.update { it.copy(loading = true) }
         viewModelScope.launch {
             try {
-                val page = hermes.rest { it.messages(sessionId, hermes.profile.value, offset = chat.loadedOffset) }
+                val page = hermes.rest { it.messages(sessionId, conversationProfile, offset = chat.loadedOffset) }
                 _chat.update {
                     if (it.sessionId != sessionId) it
                     else it.copy(
@@ -859,6 +890,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application), Ch
                             put("cols", 96)
                             put("source", "desktop")
                             if (cwd != null) put("cwd", cwd)
+                            _chat.value.botProfile?.let { put("profile", it) }
                         },
                     ).obj
                     runtimeId = created?.get("session_id").str ?: error("The gateway didn't create a session.")
@@ -869,11 +901,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application), Ch
                 for (attachment in attachments) {
                     references += uploadAttachment(runtimeId, attachment) ?: continue
                 }
+                val outbound = BotMentionsHook.annotate(hermes, trimmed, conversationProfile)
                 val result = hermes.rpc(
                     "prompt.submit",
                     buildJsonObject {
                         put("session_id", runtimeId)
-                        put("text", app.hermesconduit.android.model.Attachment.promptText(trimmed, references))
+                        put("text", app.hermesconduit.android.model.Attachment.promptText(outbound, references))
                         if (surface != null) put("surface", surface)
                         if (surface == "voice") put("voice_turn", true)
                     },
@@ -955,6 +988,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application), Ch
 
     /** One answer per question, in order. */
     override fun answerClarify(request: ClarifyRequest, answers: List<String>) {
+        val botProfile = _chat.value.botProfile
         _chat.update { it.copy(clarify = null) }
         viewModelScope.launch {
             try {
@@ -968,6 +1002,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application), Ch
                                 put("request_id", request.requestId)
                                 put("question_id", q.id ?: i.toString())
                                 put("answer", answers.getOrElse(i) { "" })
+                                botProfile?.let { put("profile", it) }
                             },
                         )
                     }
@@ -978,6 +1013,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application), Ch
                                 put("request_id", request.requestId)
                                 put("answer", answers.getOrElse(i) { "" })
                                 q.id?.let { put("question_id", it) }
+                                botProfile?.let { put("profile", it) }
                             },
                         )
                     }

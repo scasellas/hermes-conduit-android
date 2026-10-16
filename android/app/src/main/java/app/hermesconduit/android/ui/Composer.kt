@@ -124,6 +124,14 @@ fun Composer(chat: ChatState, enabled: Boolean, actions: ChatActions, slashComma
                 }
             }
         }
+        if (suggestions.isEmpty()) {
+            val mentions = remember(text) {
+                app.hermesconduit.android.model.MentionAutocomplete.activeQuery(text)
+                    ?.let { q -> app.hermesconduit.android.model.MentionAutocomplete.filter(actions.mentionCandidates(), q) }
+                    .orEmpty()
+            }
+            MentionSuggestionList(mentions) { text = app.hermesconduit.android.model.MentionAutocomplete.completing(text, it) }
+        }
         if (attachments.isNotEmpty()) {
             Row(
                 Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 4.dp),
@@ -240,8 +248,35 @@ class ComposerDrafts(context: android.content.Context) {
     }
 }
 
+/** The @mention picker shown above a composer while a trailing `@query` is typed. */
 @Composable
-private fun AttachmentChip(attachment: Attachment, onRemove: () -> Unit) {
+internal fun MentionSuggestionList(
+    candidates: List<app.hermesconduit.android.model.MentionAutocomplete.Candidate>,
+    onSelected: (app.hermesconduit.android.model.MentionAutocomplete.Candidate) -> Unit,
+) {
+    if (candidates.isEmpty()) return
+    androidx.compose.material3.Surface(
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        shape = RoundedCornerShape(16.dp),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp).heightIn(max = 240.dp),
+    ) {
+        androidx.compose.foundation.lazy.LazyColumn {
+            items(candidates.size) { index ->
+                val c = candidates[index]
+                Row(
+                    Modifier.fillMaxWidth().clickable { onSelected(c) }.padding(horizontal = 14.dp, vertical = 10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Text(c.title, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text("@${c.tag}", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+internal fun AttachmentChip(attachment: Attachment, onRemove: () -> Unit) {
     val thumbnail = remember(attachment.id) {
         if (attachment.isImage) runCatching {
             val options = BitmapFactory.Options().apply { inSampleSize = 8 }

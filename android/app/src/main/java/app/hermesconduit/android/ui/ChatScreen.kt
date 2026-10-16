@@ -112,6 +112,8 @@ interface ChatActions {
     fun setFast(enabled: Boolean) {}
     fun setYolo(enabled: Boolean) {}
     fun respondInputPrompt(value: String) {}
+    /** Bots the composer's @ picker offers (Bot Mode roster minus the listener). */
+    fun mentionCandidates(): List<app.hermesconduit.android.model.MentionAutocomplete.Candidate> = emptyList()
 }
 
 @Composable
