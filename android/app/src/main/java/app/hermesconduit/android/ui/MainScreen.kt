@@ -49,6 +49,10 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import app.hermesconduit.android.core.t
+import app.hermesconduit.android.ui.nav.features
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -60,7 +64,7 @@ import java.text.DateFormat
 import java.util.Date
 
 @Composable
-fun MainScreen(viewModel: AppViewModel) {
+fun MainScreen(viewModel: AppViewModel, openFeature: (String) -> Unit = {}) {
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val wide = maxWidth >= 840.dp
         val drawerState = rememberDrawerState(DrawerValue.Closed)
@@ -71,6 +75,7 @@ fun MainScreen(viewModel: AppViewModel) {
             SessionDrawer(
                 viewModel = viewModel,
                 onPicked = { if (!wide) closeDrawer() },
+                openFeature = { route -> if (!wide) closeDrawer(); openFeature(route) },
             )
         }
         val chat = @Composable {
@@ -109,7 +114,7 @@ interface DrawerActions {
 }
 
 @Composable
-private fun SessionDrawer(viewModel: AppViewModel, onPicked: () -> Unit) {
+private fun SessionDrawer(viewModel: AppViewModel, onPicked: () -> Unit, openFeature: (String) -> Unit) {
     val sessions by viewModel.sessions.collectAsStateWithLifecycle()
     val chat by viewModel.chat.collectAsStateWithLifecycle()
     val profile by viewModel.profile.collectAsStateWithLifecycle()
@@ -120,6 +125,7 @@ private fun SessionDrawer(viewModel: AppViewModel, onPicked: () -> Unit) {
         sessions, chat.sessionId, profile, profiles, viewModel.dashboardUrl, viewModel, onPicked,
         dashboards = dashboards.map { it.id to it.displayName },
         activeDashboardId = active?.id,
+        openFeature = openFeature,
     )
 }
 
@@ -134,6 +140,7 @@ fun SessionDrawerContent(
     onPicked: () -> Unit,
     dashboards: List<Pair<String, String>> = emptyList(),
     activeDashboardId: String? = null,
+    openFeature: (String) -> Unit = {},
 ) {
     var profileMenu by remember { mutableStateOf(false) }
     var dashboardMenu by remember { mutableStateOf(false) }
@@ -213,6 +220,22 @@ fun SessionDrawerContent(
                     onArchive = { actions.archiveSession(session.id) },
                     onDelete = { actions.deleteSession(session.id) },
                 )
+            }
+        }
+        HorizontalDivider()
+        val tools = features.filter { it.inDrawer }
+        Row(
+            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            tools.forEach { tool ->
+                Column(
+                    Modifier.clip(MaterialTheme.shapes.medium).clickable { openFeature(tool.route) }.padding(8.dp).width(64.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Icon(tool.icon, null, tint = MaterialTheme.colorScheme.primary)
+                    Text(t(tool.title), style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
             }
         }
         HorizontalDivider()
