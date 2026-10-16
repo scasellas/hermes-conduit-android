@@ -15,7 +15,7 @@ import app.hermesconduit.android.model.CapabilityToolsetOrdering
 import app.hermesconduit.android.model.ConnectorCatalogEntry
 import app.hermesconduit.android.model.ConnectorProbe
 import app.hermesconduit.android.model.ConnectorServer
-import app.hermesconduit.android.model.GatewayRestartState
+import app.hermesconduit.android.model.CapabilityRestartState
 import app.hermesconduit.android.model.HermesActionStatus
 import app.hermesconduit.android.model.OfficialSkill
 import app.hermesconduit.android.model.PluginCatalogEntry
@@ -81,7 +81,7 @@ data class CapabilitiesState(
     val pluginBusy: Set<String> = emptySet(),
     /** A plugin change Hermes applies only after a gateway restart. */
     val pluginsNeedRestart: Boolean = false,
-    val restart: GatewayRestartState = GatewayRestartState.Idle,
+    val restart: CapabilityRestartState = CapabilityRestartState.Idle,
 ) {
     /** Hermes' plugin routes act on the dashboard's own (default) profile, so other profiles only read. */
     val canManagePlugins: Boolean get() = profile == "default"
@@ -675,10 +675,10 @@ class CapabilitiesViewModel(application: Application) : AndroidViewModel(applica
         val token = generation
         restartJob?.cancel()
         restartJob = viewModelScope.launch {
-            fun report(state: GatewayRestartState) = commit(token) {
-                it.copy(restart = state, pluginsNeedRestart = it.pluginsNeedRestart && state !is GatewayRestartState.Restarted)
+            fun report(state: CapabilityRestartState) = commit(token) {
+                it.copy(restart = state, pluginsNeedRestart = it.pluginsNeedRestart && state !is CapabilityRestartState.Restarted)
             }
-            report(GatewayRestartState.Requesting)
+            report(CapabilityRestartState.Requesting)
             val before = gatewayStatus()
             try {
                 send("POST", "api/gateway/restart", scoped = false)
@@ -686,14 +686,14 @@ class CapabilitiesViewModel(application: Application) : AndroidViewModel(applica
                 throw e
             } catch (e: Exception) {
                 val code = (e as? DashboardHttpException)?.code
-                report(if (code in setOf(404, 405, 501)) GatewayRestartState.Unsupported else GatewayRestartState.Failed(e.userMessage()))
+                report(if (code in setOf(404, 405, 501)) CapabilityRestartState.Unsupported else CapabilityRestartState.Failed(e.userMessage()))
                 return@launch
             }
             val started = System.currentTimeMillis()
             val monitor = CapabilityRestartMonitor(before)
             var actionLogAvailable = true
             var latestLine: String? = null
-            report(GatewayRestartState.Restarting(GatewayRestartState.Stage.STOPPING, null))
+            report(CapabilityRestartState.Restarting(CapabilityRestartState.Stage.STOPPING, null))
             while (true) {
                 delay(1_500)
                 var action: HermesActionStatus? = null
@@ -710,7 +710,7 @@ class CapabilitiesViewModel(application: Application) : AndroidViewModel(applica
                 val gateway = gatewayStatus()
                 latestLine = action?.let(CapabilityRestartMonitor::latestLine) ?: latestLine
                 val verdict = monitor.observe(action, gateway, System.currentTimeMillis() - started)
-                if (verdict is GatewayRestartState.Restarting) {
+                if (verdict is CapabilityRestartState.Restarting) {
                     report(verdict.copy(detail = latestLine))
                 } else {
                     report(verdict)
@@ -728,7 +728,7 @@ class CapabilitiesViewModel(application: Application) : AndroidViewModel(applica
         null
     }
 
-    fun dismissRestartOutcome() = _state.update { if (it.restart.isInProgress) it else it.copy(restart = GatewayRestartState.Idle) }
+    fun dismissRestartOutcome() = _state.update { if (it.restart.isInProgress) it else it.copy(restart = CapabilityRestartState.Idle) }
 
     // endregion
 

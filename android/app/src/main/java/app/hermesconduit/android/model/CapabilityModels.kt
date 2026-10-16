@@ -692,17 +692,17 @@ sealed interface CapabilityInstallState {
 // region Gateway restart (offered after a plugin change)
 
 /** Where Restart Gateway stands. */
-sealed interface GatewayRestartState {
+sealed interface CapabilityRestartState {
     enum class Stage { DRAINING, STOPPING, STARTING }
 
-    data object Idle : GatewayRestartState
-    data object Requesting : GatewayRestartState
-    data class Restarting(val stage: Stage, val detail: String?) : GatewayRestartState
-    data class Restarted(val sharedProfiles: List<String>) : GatewayRestartState
-    data class Failed(val detail: String?) : GatewayRestartState
-    data object FailedToStart : GatewayRestartState
-    data object NotBackYet : GatewayRestartState
-    data object Unsupported : GatewayRestartState
+    data object Idle : CapabilityRestartState
+    data object Requesting : CapabilityRestartState
+    data class Restarting(val stage: Stage, val detail: String?) : CapabilityRestartState
+    data class Restarted(val sharedProfiles: List<String>) : CapabilityRestartState
+    data class Failed(val detail: String?) : CapabilityRestartState
+    data object FailedToStart : CapabilityRestartState
+    data object NotBackYet : CapabilityRestartState
+    data object Unsupported : CapabilityRestartState
 
     val isInProgress: Boolean get() = this is Requesting || this is Restarting
 }
@@ -744,25 +744,25 @@ class CapabilityRestartMonitor(private val before: GatewayStatus?) {
     private var childFinishedAt: Long? = null
 
     /** [action] and [gateway] are null when that read failed; [elapsedMs] counts from when Hermes took the request. */
-    fun observe(action: HermesActionStatus?, gateway: GatewayStatus?, elapsedMs: Long): GatewayRestartState {
+    fun observe(action: HermesActionStatus?, gateway: GatewayStatus?, elapsedMs: Long): CapabilityRestartState {
         if (action != null && !action.running && action.exitCode != null) {
-            if (action.exitCode != 0) return GatewayRestartState.Failed(latestLine(action))
+            if (action.exitCode != 0) return CapabilityRestartState.Failed(latestLine(action))
             if (childFinishedAt == null) childFinishedAt = elapsedMs
         }
         if (before?.running == false || gateway?.running == false) sawDown = true
         if (gateway != null && gateway.isServing) {
             val newProcess = before?.pid != null && gateway.pid != null && before.pid != gateway.pid
             if (childFinishedAt != null || sawDown || newProcess || elapsedMs >= RUNNING_CHILD_GRACE_MS) {
-                return GatewayRestartState.Restarted(gateway.sharedProfiles)
+                return CapabilityRestartState.Restarted(gateway.sharedProfiles)
             }
         }
         val outOfTime = elapsedMs >= WATCH_LIMIT_MS || childFinishedAt?.let { elapsedMs - it >= COME_BACK_WINDOW_MS } == true
         if (outOfTime) {
-            return if (gateway?.state?.lowercase() == "startup_failed") GatewayRestartState.FailedToStart else GatewayRestartState.NotBackYet
+            return if (gateway?.state?.lowercase() == "startup_failed") CapabilityRestartState.FailedToStart else CapabilityRestartState.NotBackYet
         }
-        if (sawDown || childFinishedAt != null) return GatewayRestartState.Restarting(GatewayRestartState.Stage.STARTING, null)
-        val stage = if (gateway?.state?.lowercase() == "draining") GatewayRestartState.Stage.DRAINING else GatewayRestartState.Stage.STOPPING
-        return GatewayRestartState.Restarting(stage, null)
+        if (sawDown || childFinishedAt != null) return CapabilityRestartState.Restarting(CapabilityRestartState.Stage.STARTING, null)
+        val stage = if (gateway?.state?.lowercase() == "draining") CapabilityRestartState.Stage.DRAINING else CapabilityRestartState.Stage.STOPPING
+        return CapabilityRestartState.Restarting(stage, null)
     }
 
     companion object {

@@ -33,7 +33,7 @@ import androidx.compose.ui.unit.dp
 import app.hermesconduit.android.core.L10n
 import app.hermesconduit.android.core.t
 import app.hermesconduit.android.model.AgentPluginRow
-import app.hermesconduit.android.model.GatewayRestartState
+import app.hermesconduit.android.model.CapabilityRestartState
 import app.hermesconduit.android.model.PluginCatalogEntry
 import app.hermesconduit.android.model.PluginUpdateOutcome
 import kotlinx.coroutines.CancellationException
@@ -112,7 +112,7 @@ fun PluginsTab(vm: CapabilitiesViewModel, state: CapabilitiesState, query: Strin
             else -> {
                 state.pluginsError?.let { item { CapabilityRefreshBanner(it) } }
                 if (!canManage) item { FootnoteText(t("Hermes installs plugins for the host's default profile. Switch to it to change them.")) }
-                if (state.pluginsNeedRestart || state.restart != GatewayRestartState.Idle) item { PluginRestartCard(vm, state) }
+                if (state.pluginsNeedRestart || state.restart != CapabilityRestartState.Idle) item { PluginRestartCard(vm, state) }
                 message?.let { item { FootnoteText(it) } }
                 item(key = "installed") {
                     CapabilitySection(t("Installed"), footer = t("Plugins extend the agent with tools, hooks and providers.")) {
@@ -249,22 +249,22 @@ fun PluginRestartCard(vm: CapabilitiesViewModel, state: CapabilitiesState) {
 
 /** Where Restart Gateway stands: what Hermes is doing, then how it went. */
 @Composable
-private fun RestartStatus(restart: GatewayRestartState, onDismiss: () -> Unit) {
+private fun RestartStatus(restart: CapabilityRestartState, onDismiss: () -> Unit) {
     val (title, detail) = when (restart) {
-        GatewayRestartState.Idle -> return
-        GatewayRestartState.Requesting -> t("Asking Hermes to restart the gateway…") to null
-        is GatewayRestartState.Restarting -> when (restart.stage) {
-            GatewayRestartState.Stage.DRAINING -> t("Letting running tasks finish…")
-            GatewayRestartState.Stage.STOPPING -> t("Stopping the gateway…")
-            GatewayRestartState.Stage.STARTING -> t("Starting the gateway…")
+        CapabilityRestartState.Idle -> return
+        CapabilityRestartState.Requesting -> t("Asking Hermes to restart the gateway…") to null
+        is CapabilityRestartState.Restarting -> when (restart.stage) {
+            CapabilityRestartState.Stage.DRAINING -> t("Letting running tasks finish…")
+            CapabilityRestartState.Stage.STOPPING -> t("Stopping the gateway…")
+            CapabilityRestartState.Stage.STARTING -> t("Starting the gateway…")
         } to restart.detail
-        is GatewayRestartState.Restarted -> t("Gateway restarted") to
+        is CapabilityRestartState.Restarted -> t("Gateway restarted") to
             restart.sharedProfiles.takeIf { it.isNotEmpty() }?.let { t("Profiles on this gateway: %s", it.joinToString(", ")) }
-        is GatewayRestartState.Failed -> t("Couldn't restart the gateway") to restart.detail
-        GatewayRestartState.FailedToStart -> t("The gateway didn't start") to t("Run hermes gateway status on the host to see why.")
-        GatewayRestartState.NotBackYet -> t("The gateway isn't back yet") to
+        is CapabilityRestartState.Failed -> t("Couldn't restart the gateway") to restart.detail
+        CapabilityRestartState.FailedToStart -> t("The gateway didn't start") to t("Run hermes gateway status on the host to see why.")
+        CapabilityRestartState.NotBackYet -> t("The gateway isn't back yet") to
             t("It may still be finishing running tasks. Run hermes gateway status on the host to check.")
-        GatewayRestartState.Unsupported -> t("This Hermes can't restart its gateway from Conduit") to
+        CapabilityRestartState.Unsupported -> t("This Hermes can't restart its gateway from Conduit") to
             t("Update Hermes, or run hermes gateway restart on the host.")
     }
     Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -347,7 +347,7 @@ fun PluginDetailPage(vm: CapabilitiesViewModel, state: CapabilitiesState, name: 
                     }
                 }
             }
-            if (state.pluginsNeedRestart || state.restart != GatewayRestartState.Idle) PluginRestartCard(vm, state)
+            if (state.pluginsNeedRestart || state.restart != CapabilityRestartState.Idle) PluginRestartCard(vm, state)
             message?.let { FootnoteText(it) }
             if (canManage && plugin.canUpdate) {
                 val label = when {

@@ -13,7 +13,7 @@ import app.hermesconduit.android.model.ConnectorGrouping
 import app.hermesconduit.android.model.ConnectorProbe
 import app.hermesconduit.android.model.ConnectorServer
 import app.hermesconduit.android.model.ConnectorState
-import app.hermesconduit.android.model.GatewayRestartState
+import app.hermesconduit.android.model.CapabilityRestartState
 import app.hermesconduit.android.model.HermesActionStatus
 import app.hermesconduit.android.model.OfficialSkill
 import app.hermesconduit.android.model.PluginCatalogEntry
@@ -329,23 +329,23 @@ class CapabilityModelsTest {
         val monitor = CapabilityRestartMonitor(before)
         val running = HermesActionStatus(running = true, exitCode = null, lines = emptyList())
         assertEquals(
-            GatewayRestartState.Restarting(GatewayRestartState.Stage.STOPPING, null),
+            CapabilityRestartState.Restarting(CapabilityRestartState.Stage.STOPPING, null),
             monitor.observe(running, before, 1_000),
         )
         assertEquals(
-            GatewayRestartState.Restarting(GatewayRestartState.Stage.STARTING, null),
+            CapabilityRestartState.Restarting(CapabilityRestartState.Stage.STARTING, null),
             monitor.observe(running, before.copy(running = false), 3_000),
         )
-        assertEquals(GatewayRestartState.Restarted(emptyList()), monitor.observe(running, before, 5_000))
+        assertEquals(CapabilityRestartState.Restarted(emptyList()), monitor.observe(running, before, 5_000))
 
         val newPid = CapabilityRestartMonitor(before).observe(null, before.copy(pid = 11), 2_000)
-        assertTrue(newPid is GatewayRestartState.Restarted)
+        assertTrue(newPid is CapabilityRestartState.Restarted)
 
         val failed = CapabilityRestartMonitor(before).observe(HermesActionStatus(false, 2, listOf("boom")), before, 2_000)
-        assertEquals(GatewayRestartState.Failed("boom"), failed)
+        assertEquals(CapabilityRestartState.Failed("boom"), failed)
 
         val stuck = CapabilityRestartMonitor(before).observe(null, before.copy(running = false, state = "startup_failed"), CapabilityRestartMonitor.WATCH_LIMIT_MS)
-        assertEquals(GatewayRestartState.FailedToStart, stuck)
+        assertEquals(CapabilityRestartState.FailedToStart, stuck)
 
         val parsed = CapabilityRestartMonitor.GatewayStatus.parse(
             json("""{"gateway_running":true,"gateway_state":"draining","gateway_shared_with":["work","default","work","alpha"]}"""),
