@@ -26,6 +26,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
@@ -71,6 +72,39 @@ class HermesConnection(context: Context) {
     /** Every gateway event, across reconnects. */
     val events: SharedFlow<StreamEvent> = _events
 
+    private val _rawEvents = MutableSharedFlow<JsonObject>(extraBufferCapacity = 256)
+    /** Raw `event` notification params, across reconnects. */
+    val rawEvents: SharedFlow<JsonObject> = _rawEvents
+
+    /** Session id → the profile its RPCs ride (Bot Chats run in the bot's own profile). */
+    private val sessionScopes = java.util.concurrent.ConcurrentHashMap<String, String>()
+
+    /** Scopes every later RPC naming [sessionId] to [profile]. */
+    fun scopeSession(sessionId: String?, profile: String) {
+        val id = sessionId?.trim()?.takeIf { it.isNotEmpty() } ?: return
+        sessionScopes[id] = profile
+    }
+
+    fun sessionScope(sessionId: String?): String? = sessionId?.trim()?.let { sessionScopes[it] }
+
+    private fun scoped(params: JsonObject): JsonObject {
+        if (params.containsKey("profile") || sessionScopes.isEmpty()) return params
+        val id = (params["session_id"] ?: params["session_key"]).let { (it as? kotlinx.serialization.json.JsonPrimitive)?.contentOrNull } ?: return params
+        val profile = sessionScope(id) ?: return params
+        return JsonObject(params + ("profile" to kotlinx.serialization.json.JsonPrimitive(profile)))
+    }
+
+    /** A resume/create under a scoped profile scopes the runtime id it returns too. */
+    private fun noteScopedResult(method: String, params: JsonObject, result: JsonElement) {
+        if (method != "session.resume" && method != "session.create") return
+        val profile = (params["profile"] as? kotlinx.serialization.json.JsonPrimitive)?.contentOrNull ?: return
+        if (sessionScopes.values.none { it == profile }) return
+        val o = result as? JsonObject ?: return
+        listOf("session_id", "stored_session_id").forEach { key ->
+            (o[key] as? kotlinx.serialization.json.JsonPrimitive)?.contentOrNull?.let { scopeSession(it, profile) }
+        }
+    }
+
     private val _connected = MutableSharedFlow<Unit>(extraBufferCapacity = 8)
     /** Emits after every successful socket (re)connect. */
     val connected: SharedFlow<Unit> = _connected
@@ -102,6 +136,7 @@ class HermesConnection(context: Context) {
 
     private fun activate(connection: SavedConnection) {
         disconnectGateway()
+        sessionScopes.clear()
         _connection.value = connection
         _profile.value = connection.profile
         api = makeApi(connection)
@@ -215,10 +250,13 @@ class HermesConnection(context: Context) {
     }
 
     suspend fun rpc(method: String, params: JsonObject = buildJsonObject {}): JsonElement =
-        gateway?.request(method, params) ?: throw IllegalStateException("Not connected to the gateway.")
+        rpc(method, params, GatewayClient.timeoutFor(method))
 
-    suspend fun rpc(method: String, params: JsonObject, timeoutMs: Long): JsonElement =
-        gateway?.request(method, params, timeoutMs) ?: throw IllegalStateException("Not connected to the gateway.")
+    suspend fun rpc(method: String, params: JsonObject, timeoutMs: Long): JsonElement {
+        val client = gateway ?: throw IllegalStateException("Not connected to the gateway.")
+        val sent = scoped(params)
+        return client.request(method, sent, timeoutMs).also { noteScopedResult(method, sent, it) }
+    }
 
     fun respond(id: String, result: JsonElement) {
         gateway?.respond(id, result)
@@ -249,6 +287,9 @@ class HermesConnection(context: Context) {
         gatewayJobs = listOf(
             scope.launch {
                 client.events.collect { event -> _events.emit(event) }
+            },
+            scope.launch {
+                client.rawEvents.collect { params -> _rawEvents.emit(params) }
             },
             scope.launch {
                 client.state.collect { state ->

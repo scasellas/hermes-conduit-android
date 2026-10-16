@@ -67,6 +67,10 @@ class GatewayClient(
     private val _events = MutableSharedFlow<StreamEvent>(extraBufferCapacity = 1024)
     val events: SharedFlow<StreamEvent> = _events
 
+    private val _rawEvents = MutableSharedFlow<JsonObject>(extraBufferCapacity = 256)
+    /** The raw params of every `event` notification (for feature parsers such as group rooms). */
+    val rawEvents: SharedFlow<JsonObject> = _rawEvents
+
     /** Opens the socket; suspends until it is open or fails (15 s). */
     suspend fun connect(baseUrl: String, ticket: String) {
         val opened = CompletableDeferred<Unit>()
@@ -124,7 +128,7 @@ class GatewayClient(
 
     suspend fun request(method: String, params: JsonObject = JsonObject(emptyMap()), timeoutMs: Long = timeoutFor(method)): JsonElement {
         val id = nextId.getAndIncrement()
-        val scoped = if (method in UNSCOPED || params.containsKey("profile") || profile == "default") params
+        val scoped = if (isUnscoped(method) || params.containsKey("profile") || profile == "default") params
         else JsonObject(params + ("profile" to JsonPrimitive(profile)))
         val frame = buildJsonObject {
             put("jsonrpc", "2.0")
@@ -172,6 +176,7 @@ class GatewayClient(
         val idElement = frame["id"]
         when {
             method == "event" -> {
+                frame["params"].obj?.let { _rawEvents.tryEmit(it) }
                 val event = StreamEventParser.parse(frame["params"]) ?: return
                 if (event is StreamEvent.GatewayReady) {
                     scope.launch {
@@ -260,6 +265,9 @@ class GatewayClient(
         private const val PING_IDLE_MS = 15_000L
         private const val PING_TIMEOUT_MS = 10_000L
         private val UNSCOPED = setOf("client.capabilities", "ping", "profiles.list")
+
+        /** Gateway-wide methods: `profiles.*` address their profile by `name`, rooms are gateway-wide. */
+        fun isUnscoped(method: String) = method in UNSCOPED || method.startsWith("profiles.") || method.startsWith("groups.")
 
         fun timeoutFor(method: String): Long = when (method) {
             "prompt.submit" -> 180_000
