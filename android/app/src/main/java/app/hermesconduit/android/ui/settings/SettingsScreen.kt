@@ -4,6 +4,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
@@ -66,6 +67,13 @@ fun SettingsScreen(onBack: () -> Unit, navigate: (String) -> Unit) {
                     value = if (language == "system") t("System Default") else L10n.languages[language],
                     onClick = { picker = "language" },
                 )
+                val icon by settings.string(AppSettings.APP_ICON, "dark").collectAsStateWithLifecycle()
+                SettingsRow(
+                    t("App icon"),
+                    icon = Icons.Default.Palette,
+                    value = if (icon == "light") t("Light") else t("Dark"),
+                    onClick = { picker = "icon" },
+                )
                 SettingsRow(
                     t("Theme"),
                     icon = Icons.Default.DarkMode,
@@ -99,6 +107,16 @@ fun SettingsScreen(onBack: () -> Unit, navigate: (String) -> Unit) {
             listOf("system" to t("System Default")) + L10n.languages.toList(),
             language,
             onPick = { settings.set(AppSettings.LANGUAGE, it) },
+            onDismiss = { picker = null },
+        )
+        "icon" -> ChoiceDialog(
+            t("App icon"),
+            listOf("dark" to t("Dark"), "light" to t("Light")),
+            settings.getString(AppSettings.APP_ICON, "dark"),
+            onPick = {
+                settings.set(AppSettings.APP_ICON, it)
+                app.hermesconduit.android.core.AppIcon.apply(context, it)
+            },
             onDismiss = { picker = null },
         )
         "theme" -> ChoiceDialog(

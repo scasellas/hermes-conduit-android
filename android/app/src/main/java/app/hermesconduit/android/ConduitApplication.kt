@@ -13,6 +13,7 @@ class ConduitApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         L10n.load(this, settings.getString(AppSettings.LANGUAGE, "system"))
+        app.hermesconduit.android.core.Haptics.init(this)
     }
 }
 

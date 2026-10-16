@@ -8,6 +8,8 @@ import app.hermesconduit.android.core.L10n
 import app.hermesconduit.android.core.LinkState
 import app.hermesconduit.android.data.SavedConnection
 import app.hermesconduit.android.hermes
+import app.hermesconduit.android.appSettings
+import app.hermesconduit.android.data.AppSettings
 import app.hermesconduit.android.model.ChatMessage
 import app.hermesconduit.android.model.ClarifyRequest
 import app.hermesconduit.android.model.MessageNormalizer
@@ -264,9 +266,28 @@ class AppViewModel(application: Application) : AndroidViewModel(application), Ch
             refreshProfiles()
             refreshSessions()
         }
+        restoreLastChat()
+    }
+
+    /** Settings > Chat > When returning: Continue reopens the chat you were reading. */
+    private fun restoreLastChat() {
+        if (settings.getString(AppSettings.CHAT_RESUME, "continue") != "continue" || _chat.value.sessionId != null) return
+        val parts = settings.getString(AppSettings.LAST_SESSION, "").split('|', limit = 4)
+        if (parts.size < 4 || parts[0] != hermes.connection.value?.id || parts[1] != hermes.profile.value) return
+        _chat.value = ChatState(sessionId = parts[2], title = parts[3], loading = true)
+        viewModelScope.launch {
+            try {
+                val page = hermes.rest { it.messages(parts[2], hermes.profile.value) }
+                _chat.update { if (it.sessionId == parts[2]) it.copy(messages = page.messages, hasEarlier = page.hasMore, loadedOffset = HISTORY_PAGE, loading = false) else it }
+            } catch (_: Exception) {
+                _chat.update { if (it.sessionId == parts[2]) ChatState() else it }
+            }
+        }
     }
 
     override fun reconnectNow() = hermes.reconnectNow()
+
+    private val responseHaptics = app.hermesconduit.android.core.Haptics.ResponseTracker()
 
     private fun onEvent(event: StreamEvent) {
         if (event is StreamEvent.Title) {
@@ -283,6 +304,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application), Ch
         if (!addressed) return
         val next = ChatReducer.reduce(chat, event)
         _chat.value = next
+        responseHaptics.onEvent(event)
         if (chat.running && !next.running) viewModelScope.launch {
             refreshSessions()
             refreshLiveStatus()
@@ -434,10 +456,14 @@ class AppViewModel(application: Application) : AndroidViewModel(application), Ch
     }
 
     override fun newChat() {
+        settings.set(AppSettings.LAST_SESSION, "")
         _chat.value = ChatState(model = _chat.value.model, provider = _chat.value.provider)
     }
 
+    private val settings = application.appSettings
+
     override fun openSession(session: SessionSummary) {
+        settings.set(AppSettings.LAST_SESSION, "${hermes.connection.value?.id}|${hermes.profile.value}|${session.id}|${session.title}")
         if (session.unread) setUnread(session, false)
         _chat.value = ChatState(sessionId = session.id, title = session.title, loading = true, model = session.model)
         viewModelScope.launch { resume(session.id, reloadHistory = true) }
@@ -845,6 +871,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application), Ch
     fun send(text: String, attachments: List<app.hermesconduit.android.model.Attachment>, surface: String?) {
         val trimmed = text.trim()
         if (trimmed.isEmpty() && attachments.isEmpty()) return
+        app.hermesconduit.android.core.Haptics.light()
         val shown = listOf(trimmed, attachments.joinToString("\n") { "📎 ${it.name}" }).filter { it.isNotEmpty() }.joinToString("\n\n")
         val local = ChatMessage("local-${System.nanoTime()}", MessageRole.USER, shown, timestampMs = System.currentTimeMillis())
         _chat.update { it.copy(messages = it.messages + local, error = null, running = true) }
@@ -935,6 +962,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application), Ch
     }
 
     override fun respondApproval(choice: String) {
+        app.hermesconduit.android.core.Haptics.medium()
         val approval = _chat.value.approval ?: return
         _chat.update { it.copy(approval = null) }
         viewModelScope.launch {
