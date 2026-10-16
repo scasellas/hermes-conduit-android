@@ -198,7 +198,7 @@ fun Composer(chat: ChatState, enabled: Boolean, actions: ChatActions, slashComma
                     disabledIndicatorColor = Color.Transparent,
                 ),
             )
-            Spacer(Modifier.width(8.dp))
+            app.hermesconduit.android.ui.voice.DictationButton(text, onTextChange = { text = it }, enabled = enabled)
             val canSend = text.isNotBlank() || attachments.isNotEmpty()
             when {
                 canSend -> FilledIconButton(
@@ -207,7 +207,7 @@ fun Composer(chat: ChatState, enabled: Boolean, actions: ChatActions, slashComma
                     modifier = Modifier.size(52.dp),
                 ) { Icon(Icons.AutoMirrored.Filled.Send, t("Send")) }
                 chat.running -> FilledIconButton(onClick = actions::stop, modifier = Modifier.size(52.dp)) { Icon(Icons.Default.Stop, t("Stop")) }
-                else -> FilledIconButton(onClick = {}, enabled = false, modifier = Modifier.size(52.dp)) { Icon(Icons.AutoMirrored.Filled.Send, t("Send")) }
+                else -> app.hermesconduit.android.ui.voice.VoiceConversationButton(enabled = enabled)
             }
         }
     }

@@ -79,6 +79,8 @@ fun copyToClipboard(context: Context, text: String) {
 /** Optional hook so voice features can add "Read aloud" without touching this file. */
 object MessageActionHooks {
     var readAloud: ((Context, ChatMessage) -> Unit)? = null
+    /** A full Read Aloud control (speaker / stop / resume), when the voice feature installs one. */
+    var readAloudButton: (@Composable (ChatMessage) -> Unit)? = null
 }
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -140,7 +142,7 @@ fun MessageRow(message: ChatMessage, actions: ChatActions, canAct: Boolean = tru
             if (!message.streaming && message.content.isNotBlank() && canAct) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     ActionIcon(Icons.Default.ContentCopy, t("Copy")) { copyToClipboard(context, message.content) }
-                    MessageActionHooks.readAloud?.let { read ->
+                    MessageActionHooks.readAloudButton?.invoke(message) ?: MessageActionHooks.readAloud?.let { read ->
                         ActionIcon(Icons.AutoMirrored.Filled.VolumeUp, t("Read Aloud")) { read(context, message) }
                     }
                     ActionIcon(Icons.Default.FormatQuote, t("Quote")) { actions.quote(message) }

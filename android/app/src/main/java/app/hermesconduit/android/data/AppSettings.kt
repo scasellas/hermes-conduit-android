@@ -68,5 +68,12 @@ class AppSettings(context: Context) {
         const val CAPABILITIES_TAB = "capabilities.tab"
         const val CAPABILITIES_SKILLS_MOST_USED = "capabilities.skills.mostUsedFirst"
         const val CAPABILITIES_TOOLS_MOST_USED = "capabilities.tools.mostUsedFirst"
+        // Voice (device-wide; per-profile voice preferences are keyed in ui/voice/VoiceHub).
+        const val VOICE_KEEP_SCREEN_AWAKE = "conduit.voice.keepScreenAwake"
+        const val VOICE_ANIMATE_ORB = "conduit.voice.animateCallOrb"
+        const val READ_ALOUD_SPEED = "conduit.voice.readAloudSpeed"
+        const val VOICE_SETTINGS_ADVANCED = "conduit.voice.settingsAdvancedExpanded"
+        const val DICTATION_ENGINE = "conduit.dictation.engine"
+        const val DICTATION_CUSTOM_WORDS = "conduit.dictation.customWords"
     }
 }

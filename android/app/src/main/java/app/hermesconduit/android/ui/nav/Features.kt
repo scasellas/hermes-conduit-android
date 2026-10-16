@@ -16,6 +16,7 @@ import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.Chat
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.vector.ImageVector
 import app.hermesconduit.android.ui.capabilities.CapabilitiesScreen
@@ -54,6 +55,8 @@ val features: List<Feature> = listOf(
     Feature("settings.plugin", "Conduit plugin", Icons.Default.Extension, inDrawer = false) { back, nav -> app.hermesconduit.android.ui.plugin.PluginScreen(back, nav) },
     Feature("artifacts", "Artifacts", Icons.Default.GridView) { back, nav -> app.hermesconduit.android.ui.artifacts.ArtifactsScreen(back, nav) },
     Feature("workspace", "Workspace", Icons.Default.FolderOpen) { back, nav -> app.hermesconduit.android.ui.workspace.WorkspaceScreen(back, nav) },
+    Feature("voice", "Voice conversation", Icons.Default.GraphicEq) { back, nav -> app.hermesconduit.android.ui.voice.VoiceConversationScreen(back, nav) },
+    Feature("settings.voice", "Voice", Icons.Default.GraphicEq, inDrawer = false, section = "Voice") { back, _ -> app.hermesconduit.android.ui.voice.VoiceSettingsScreen(back) },
 )
 
 fun feature(route: String): Feature? = features.firstOrNull { it.route == route.substringBefore('/') }
