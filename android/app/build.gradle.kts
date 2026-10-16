@@ -36,6 +36,8 @@ android {
         compose = true
         buildConfig = true
     }
+    // The phone ↔ watch wire, shared with :wear.
+    sourceSets["main"].java.srcDir("../wearwire/src/main/kotlin")
 }
 
 dependencies {
@@ -62,6 +64,8 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
     implementation("com.mikepenz:multiplatform-markdown-renderer-m3:0.33.0")
     implementation("com.mikepenz:multiplatform-markdown-renderer-code:0.33.0")
+    implementation("com.google.android.gms:play-services-wearable:19.0.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.10.2")
     debugImplementation("androidx.compose.ui:ui-tooling")
 
     testImplementation("junit:junit:4.13.2")

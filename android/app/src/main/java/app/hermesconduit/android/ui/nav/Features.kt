@@ -18,6 +18,7 @@ import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.filled.Groups
+import androidx.compose.material.icons.filled.Watch
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.vector.ImageVector
 import app.hermesconduit.android.ui.capabilities.CapabilitiesScreen
@@ -56,6 +57,7 @@ val features: List<Feature> = listOf(
     Feature("settings.agent", "Let Hermes change settings", Icons.Default.Info, inDrawer = false, section = "App") { back, _ -> app.hermesconduit.android.ui.agentsettings.AgentSettingsPage(back) },
     Feature("settings.dashboards", "Saved Dashboards", Icons.Default.Info, inDrawer = false, section = "Server") { back, nav -> app.hermesconduit.android.ui.settings.SavedDashboardsPage(back, nav) },
     Feature("settings.notifications", "Notifications", Icons.Default.Notifications, inDrawer = false, section = "App") { back, _ -> app.hermesconduit.android.notify.NotificationSettingsPage(back) },
+    Feature("settings.watch", "Watch", Icons.Default.Watch, inDrawer = false, section = "On this device") { back, _ -> app.hermesconduit.android.watch.WatchSettingsPage(back) },
     Feature("settings.connectionlog", "Connection log", Icons.Default.Info, inDrawer = false, section = "Server") { back, _ -> app.hermesconduit.android.ui.settings.ConnectionLogPage(back) },
     Feature("settings.screenquestion", "Ask Hermes About Screen", Icons.Default.Info, inDrawer = false, section = "App") { back, _ -> app.hermesconduit.android.assist.ScreenQuestionPage(back) },
     Feature("settings.about", "About & privacy", Icons.Default.Info, inDrawer = false, section = "About") { back, _ -> app.hermesconduit.android.ui.settings.AboutPage(back) },
