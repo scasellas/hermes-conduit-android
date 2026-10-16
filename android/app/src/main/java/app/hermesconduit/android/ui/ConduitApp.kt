@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
@@ -79,19 +80,23 @@ private fun MainNavigation(viewModel: AppViewModel) {
     }
     app.hermesconduit.android.ui.present.PresentedConfirmHost()
     app.hermesconduit.android.ui.agentsettings.AgentSettingsHost()
-    CompositionLocalProvider(LocalNavigate provides navigate, androidx.compose.ui.platform.LocalUriHandler provides uriHandler) {
-        NavHost(nav, startDestination = "home") {
-            composable("home") { MainScreen(viewModel, openFeature = navigate) }
-            features.forEach { feature ->
-                composable(feature.route) {
-                    feature.content({ nav.popBackStack() }, navigate)
-                }
-                composable("${feature.route}/{arg}", arguments = listOf(navArgument("arg") { type = NavType.StringType })) { entry ->
-                    CompositionLocalProvider(LocalRouteArg provides entry.arguments?.getString("arg")?.let(Uri::decode)) {
+    androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.fillMaxSize()) {
+        CompositionLocalProvider(LocalNavigate provides navigate, androidx.compose.ui.platform.LocalUriHandler provides uriHandler) {
+            NavHost(nav, startDestination = "home") {
+                composable("home") { MainScreen(viewModel, openFeature = navigate) }
+                features.forEach { feature ->
+                    composable(feature.route) {
                         feature.content({ nav.popBackStack() }, navigate)
+                    }
+                    composable("${feature.route}/{arg}", arguments = listOf(navArgument("arg") { type = NavType.StringType })) { entry ->
+                        CompositionLocalProvider(LocalRouteArg provides entry.arguments?.getString("arg")?.let(Uri::decode)) {
+                            feature.content({ nav.popBackStack() }, navigate)
+                        }
                     }
                 }
             }
         }
+        // Calendar changes Hermes asked for, over everything.
+        androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.statusBarsPadding()) { app.hermesconduit.android.ui.phone.PhoneChangeOverlay() }
     }
 }

@@ -19,6 +19,7 @@ class ConduitApplication : Application() {
         notifications.start()
         app.hermesconduit.android.notify.ConnectionService.sync(this)
         app.hermesconduit.android.ui.voice.VoiceHub.install(this)
+        app.hermesconduit.android.ui.device.DeviceSharing.start(this)
     }
 }
 

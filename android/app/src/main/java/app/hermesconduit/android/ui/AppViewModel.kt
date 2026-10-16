@@ -1021,6 +1021,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application), Ch
         _chat.update { it.copy(messages = it.messages + local, error = null, running = true) }
         run {
             try {
+                // Location-tagged sends: a fix goes first, waited on for at most 2.5 s (Settings > Location).
+                app.hermesconduit.android.ui.device.DeviceSharing.beforeSending(getApplication())
                 var runtimeId = _chat.value.runtimeId
                 if (runtimeId == null) {
                     val cwd = _chat.value.cwd

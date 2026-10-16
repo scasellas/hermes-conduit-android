@@ -547,14 +547,3 @@ sealed interface BotSaveResult {
     data class Failed(val message: String) : BotSaveResult
 }
 
-/** Builds `ui_meta` JSON values without pulling in a builder at every call site. */
-internal fun jsonOf(value: Any?): JsonElement = when (value) {
-    null -> JsonNull
-    is JsonElement -> value
-    is String -> JsonPrimitive(value)
-    is Boolean -> JsonPrimitive(value)
-    is Number -> JsonPrimitive(value)
-    is Map<*, *> -> JsonObject(value.entries.associate { (k, v) -> k.toString() to jsonOf(v) })
-    is List<*> -> JsonArray(value.map(::jsonOf))
-    else -> JsonPrimitive(value.toString())
-}
