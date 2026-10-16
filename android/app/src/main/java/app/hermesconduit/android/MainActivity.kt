@@ -21,9 +21,27 @@ import app.hermesconduit.android.ui.theme.ConduitTheme
 class MainActivity : FragmentActivity() {
     private val viewModel: AppViewModel by viewModels()
 
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        handleIntent(intent)
+    }
+
+    /** Notification taps (and later widgets/shortcuts) carry the chat to open. */
+    private fun handleIntent(intent: android.content.Intent?) {
+        val session = intent?.getStringExtra(app.hermesconduit.android.notify.ConduitNotifications.EXTRA_SESSION) ?: return
+        viewModel.openFromNotification(
+            session,
+            intent.getStringExtra(app.hermesconduit.android.notify.ConduitNotifications.EXTRA_TITLE),
+            intent.getStringExtra(app.hermesconduit.android.notify.ConduitNotifications.EXTRA_DASHBOARD),
+            intent.getStringExtra(app.hermesconduit.android.notify.ConduitNotifications.EXTRA_PROFILE),
+        )
+        intent.removeExtra(app.hermesconduit.android.notify.ConduitNotifications.EXTRA_SESSION)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        handleIntent(intent)
         val settings = appSettings
         setContent {
             val languagePreference by settings.string(AppSettings.LANGUAGE, "system").collectAsStateWithLifecycle()

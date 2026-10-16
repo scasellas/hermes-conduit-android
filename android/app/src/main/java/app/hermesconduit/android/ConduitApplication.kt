@@ -9,11 +9,15 @@ import app.hermesconduit.android.data.AppSettings
 class ConduitApplication : Application() {
     val connection: HermesConnection by lazy { HermesConnection(this) }
     val settings: AppSettings by lazy { AppSettings(this) }
+    val notifications by lazy { app.hermesconduit.android.notify.NotificationMonitor(this) }
 
     override fun onCreate() {
         super.onCreate()
         L10n.load(this, settings.getString(AppSettings.LANGUAGE, "system"))
         app.hermesconduit.android.core.Haptics.init(this)
+        app.hermesconduit.android.notify.ForegroundState.install()
+        notifications.start()
+        app.hermesconduit.android.notify.ConnectionService.sync(this)
     }
 }
 

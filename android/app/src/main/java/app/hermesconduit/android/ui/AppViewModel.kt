@@ -214,6 +214,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application), Ch
     }
 
     private fun onSignedIn() {
+        app.hermesconduit.android.notify.ConnectionService.sync(getApplication())
         _chat.value = ChatState()
         _sessions.value = SessionsState()
         _screen.value = Screen.Main
@@ -242,6 +243,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application), Ch
     }
 
     override fun signOut() {
+        viewModelScope.launch { kotlinx.coroutines.delay(100); app.hermesconduit.android.notify.ConnectionService.sync(getApplication()) }
         _sessions.value = SessionsState()
         _chat.value = ChatState()
         _profiles.value = listOf("default")
@@ -304,6 +306,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application), Ch
         if (!addressed) return
         val next = ChatReducer.reduce(chat, event)
         _chat.value = next
+        app.hermesconduit.android.notify.ForegroundState.openSessionIds = setOfNotNull(next.sessionId, next.runtimeId)
         responseHaptics.onEvent(event)
         if (chat.running && !next.running) viewModelScope.launch {
             refreshSessions()
@@ -462,7 +465,15 @@ class AppViewModel(application: Application) : AndroidViewModel(application), Ch
 
     private val settings = application.appSettings
 
+    /** A notification tap: switch to its dashboard and profile, then open the chat. */
+    fun openFromNotification(sessionId: String, title: String?, dashboardId: String?, profile: String?) {
+        if (dashboardId != null && dashboardId != hermes.connection.value?.id) switchDashboard(dashboardId)
+        if (profile != null && profile != hermes.profile.value) selectProfile(profile)
+        openSessionById(sessionId, title.orEmpty())
+    }
+
     override fun openSession(session: SessionSummary) {
+        app.hermesconduit.android.notify.ForegroundState.openSessionIds = session.alternateIds + session.id
         settings.set(AppSettings.LAST_SESSION, "${hermes.connection.value?.id}|${hermes.profile.value}|${session.id}|${session.title}")
         if (session.unread) setUnread(session, false)
         _chat.value = ChatState(sessionId = session.id, title = session.title, loading = true, model = session.model)

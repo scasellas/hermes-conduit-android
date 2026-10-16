@@ -16,6 +16,7 @@ import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.Chat
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.vector.ImageVector
 import app.hermesconduit.android.ui.capabilities.CapabilitiesScreen
@@ -47,6 +48,7 @@ val features: List<Feature> = listOf(
     Feature("settings.model", "Model", Icons.Default.Memory, inDrawer = false, section = "Hermes") { back, _ -> app.hermesconduit.android.ui.settings.ModelDefaultsPage(back) },
     Feature("settings.chat", "Chat", Icons.Default.Chat, inDrawer = false, section = "Hermes") { back, _ -> app.hermesconduit.android.ui.settings.ChatSettingsPage(back) },
     Feature("settings.memory", "Memory & delegation", Icons.Default.Psychology, inDrawer = false, section = "Hermes") { back, _ -> app.hermesconduit.android.ui.settings.MemorySettingsPage(back) },
+    Feature("settings.notifications", "Notifications", Icons.Default.Notifications, inDrawer = false, section = "App") { back, _ -> app.hermesconduit.android.notify.NotificationSettingsPage(back) },
     Feature("settings.about", "About & privacy", Icons.Default.Info, inDrawer = false, section = "About") { back, _ -> app.hermesconduit.android.ui.settings.AboutPage(back) },
     Feature("capabilities", "Capabilities", Icons.Default.Extension, inDrawer = true) { back, _ -> CapabilitiesScreen(back) },
     Feature("cron", "Cron", Icons.Default.Schedule) { back, nav -> app.hermesconduit.android.ui.cron.CronScreen(back, nav) },
