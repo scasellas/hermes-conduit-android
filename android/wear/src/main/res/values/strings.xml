@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Conduit</string>
+    <string name="talk_to_hermes">Talk to Hermes</string>
+    <string name="talk_description">Starts a voice call to Hermes on your Watch.</string>
+</resources>
