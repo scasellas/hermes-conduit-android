@@ -56,15 +56,31 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material.icons.filled.OpenInFull
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import app.hermesconduit.android.appSettings
 import androidx.core.content.FileProvider
 import app.hermesconduit.android.core.t
 import app.hermesconduit.android.model.Attachment
 import java.io.File
 
 @Composable
-fun Composer(chat: ChatState, enabled: Boolean, actions: ChatActions) {
+fun Composer(chat: ChatState, enabled: Boolean, actions: ChatActions, slashCommands: List<app.hermesconduit.android.model.SlashCommand> = emptyList()) {
     val context = LocalContext.current
-    var text by rememberSaveable { mutableStateOf("") }
+    val drafts = remember { ComposerDrafts(context) }
+    var text by rememberSaveable(chat.sessionId) { mutableStateOf(drafts.load(chat.sessionId)) }
+    androidx.compose.runtime.LaunchedEffect(chat.prefill) {
+        chat.prefill?.let {
+            text = if (text.isBlank()) it else "$text\n$it"
+            actions.consumePrefill()
+        }
+    }
+    androidx.compose.runtime.LaunchedEffect(text, chat.sessionId) { drafts.save(chat.sessionId, text) }
+    val sendOnEnter by context.appSettings.bool(app.hermesconduit.android.data.AppSettings.SEND_ON_ENTER, false).collectAsStateWithLifecycle()
+    var fullEditor by remember { mutableStateOf(false) }
     val attachments = remember { mutableStateListOf<Attachment>() }
     var menu by remember { mutableStateOf(false) }
     var attachError by remember { mutableStateOf<String?>(null) }
@@ -87,6 +103,26 @@ fun Composer(chat: ChatState, enabled: Boolean, actions: ChatActions) {
     Column(Modifier.fillMaxWidth().navigationBarsPadding()) {
         attachError?.let {
             Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(horizontal = 16.dp))
+        }
+        val suggestions = SlashCommands.suggestions(text, slashCommands)
+        if (suggestions.isNotEmpty()) {
+            androidx.compose.material3.Surface(
+                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                shape = RoundedCornerShape(16.dp),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp).heightIn(max = 240.dp),
+            ) {
+                androidx.compose.foundation.lazy.LazyColumn {
+                    items(suggestions.size) { index ->
+                        val c = suggestions[index]
+                        Column(
+                            Modifier.fillMaxWidth().clickable { text = "/${c.name} " }.padding(horizontal = 14.dp, vertical = 8.dp),
+                        ) {
+                            Text("/${c.name}" + (c.argsHint?.let { " $it" } ?: ""), style = MaterialTheme.typography.bodyMedium)
+                            Text(c.description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                    }
+                }
+            }
         }
         if (attachments.isNotEmpty()) {
             Row(
@@ -130,9 +166,29 @@ fun Composer(chat: ChatState, enabled: Boolean, actions: ChatActions) {
                     )
                 }
             }
+            val submit = {
+                if (attachments.isEmpty() && actions.runSlash(text)) {
+                    text = ""
+                } else {
+                    actions.send(text, attachments.toList())
+                    text = ""
+                    attachments.clear()
+                }
+            }
             TextField(
                 value = text,
-                onValueChange = { text = it },
+                onValueChange = { new ->
+                    // Return-key send for hardware keyboards (Settings > Chat).
+                    if (sendOnEnter && new.endsWith("\n") && !text.endsWith("\n") && new.length == text.length + 1 && new.isNotBlank()) {
+                        text = new.dropLast(1)
+                        if (enabled) submit()
+                    } else {
+                        text = new
+                    }
+                },
+                trailingIcon = if (text.lines().size > 3) ({
+                    IconButton(onClick = { fullEditor = true }) { Icon(Icons.Default.OpenInFull, t("Expand")) }
+                }) else null,
                 placeholder = { Text(if (chat.running) t("Steer the running turn…") else t("Message Hermes")) },
                 modifier = Modifier.weight(1f).heightIn(min = 52.dp, max = 200.dp),
                 shape = RoundedCornerShape(26.dp),
@@ -146,11 +202,7 @@ fun Composer(chat: ChatState, enabled: Boolean, actions: ChatActions) {
             val canSend = text.isNotBlank() || attachments.isNotEmpty()
             when {
                 canSend -> FilledIconButton(
-                    onClick = {
-                        actions.send(text, attachments.toList())
-                        text = ""
-                        attachments.clear()
-                    },
+                    onClick = submit,
                     enabled = enabled,
                     modifier = Modifier.size(52.dp),
                 ) { Icon(Icons.AutoMirrored.Filled.Send, t("Send")) }
@@ -158,6 +210,33 @@ fun Composer(chat: ChatState, enabled: Boolean, actions: ChatActions) {
                 else -> FilledIconButton(onClick = {}, enabled = false, modifier = Modifier.size(52.dp)) { Icon(Icons.AutoMirrored.Filled.Send, t("Send")) }
             }
         }
+    }
+
+    if (fullEditor) {
+        androidx.compose.ui.window.Dialog(
+            onDismissRequest = { fullEditor = false },
+            properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
+        ) {
+            androidx.compose.material3.Surface(Modifier.fillMaxWidth().fillMaxHeight(), color = MaterialTheme.colorScheme.background) {
+                Column(Modifier.fillMaxSize().padding(16.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(t("Message"), style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                        androidx.compose.material3.TextButton(onClick = { fullEditor = false }) { Text(t("Done")) }
+                    }
+                    TextField(value = text, onValueChange = { text = it }, modifier = Modifier.fillMaxSize())
+                }
+            }
+        }
+    }
+}
+
+/** Per-chat drafts, like the iOS ComposerDraftStore. */
+class ComposerDrafts(context: android.content.Context) {
+    private val prefs = context.getSharedPreferences("composer_drafts", android.content.Context.MODE_PRIVATE)
+    private fun key(sessionId: String?) = sessionId ?: "__new__"
+    fun load(sessionId: String?): String = prefs.getString(key(sessionId), "").orEmpty()
+    fun save(sessionId: String?, text: String) {
+        prefs.edit().apply { if (text.isBlank()) remove(key(sessionId)) else putString(key(sessionId), text) }.apply()
     }
 }
 

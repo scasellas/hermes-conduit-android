@@ -6,6 +6,11 @@ import app.hermesconduit.android.model.ClarifyRequest
 import app.hermesconduit.android.model.MessageRole
 import app.hermesconduit.android.model.StreamEvent
 import app.hermesconduit.android.model.ToolCall
+import app.hermesconduit.android.model.arr
+import app.hermesconduit.android.model.bool
+import app.hermesconduit.android.model.double
+import app.hermesconduit.android.model.long
+import app.hermesconduit.android.model.str
 
 data class ChatState(
     /** Stored session id (REST), null for a chat not created yet. */
@@ -24,6 +29,15 @@ data class ChatState(
     val approval: ApprovalRequest? = null,
     val clarify: ClarifyRequest? = null,
     val modelConfirm: ModelConfirm? = null,
+    val inputPrompt: app.hermesconduit.android.model.InputPrompt? = null,
+    val cwd: String? = null,
+    val reasoningEffort: String? = null,
+    val fast: Boolean = false,
+    val yolo: Boolean = false,
+    val activeAgents: Int = 0,
+    /** Text to place in the composer (quote, slash prefill); consumed by the composer. */
+    val prefill: String? = null,
+    val compacting: Boolean = false,
     val notice: String? = null,
     val error: String? = null,
 )
@@ -74,16 +88,51 @@ object ChatReducer {
         is StreamEvent.Clarify -> state.copy(clarify = event.request)
         is StreamEvent.RequestCancelled -> state.copy(
             clarify = state.clarify?.takeUnless { it.requestId == event.requestId },
+            inputPrompt = state.inputPrompt?.takeUnless { it.requestId == event.requestId },
             approval = if (event.method == "approval") null else state.approval,
         )
         is StreamEvent.ContextUpdate -> state.copy(contextPercent = event.percent)
-        is StreamEvent.ModelUpdate -> state.copy(
-            model = event.model.ifEmpty { state.model },
-            provider = event.provider.ifEmpty { state.provider },
+        is StreamEvent.ModelUpdate -> {
+            val changed = event.model.isNotEmpty() && state.model != null && event.model != state.model
+            state.copy(
+                model = event.model.ifEmpty { state.model },
+                provider = event.provider.ifEmpty { state.provider },
+                messages = if (changed) state.messages + ChatMessage(newId(), MessageRole.SYSTEM, "Model changed to ${event.model}", kind = "model_change")
+                else state.messages,
+            )
+        }
+        is StreamEvent.InputPromptRequest -> state.copy(inputPrompt = event.prompt)
+        is StreamEvent.Reaction -> state.copy(
+            messages = state.messages.map { if (it.rowId == event.rowId) it.copy(reactions = event.reactions) else it },
         )
+        is StreamEvent.Review -> state.copy(messages = state.messages + ChatMessage(newId(), MessageRole.SYSTEM, event.summary, kind = "review"))
+        is StreamEvent.Cwd -> state.copy(cwd = event.cwd.ifEmpty { state.cwd })
+        is StreamEvent.SessionInfo -> applyInfo(state, event.info)
+        is StreamEvent.Subagent -> state
         is StreamEvent.Title -> state.copy(title = event.title)
-        is StreamEvent.Status -> state.copy(notice = event.text ?: state.notice)
+        is StreamEvent.Status -> when (event.kind) {
+            "compacting" -> state.copy(compacting = true, notice = event.text ?: "Compacting context…")
+            "compacted" -> state.copy(compacting = false, notice = event.text ?: "Context compacted.")
+            else -> state.copy(notice = event.text ?: state.notice)
+        }
         is StreamEvent.GatewayReady, is StreamEvent.Unparsed -> state
+    }
+
+    /** Applies a `session.info` / resume `info` snapshot. */
+    fun applyInfo(state: ChatState, info: kotlinx.serialization.json.JsonObject): ChatState {
+        fun str(vararg keys: String) = keys.firstNotNullOfOrNull { k -> info[k].str?.takeIf { it.isNotBlank() } }
+        fun bool(vararg keys: String) = keys.firstNotNullOfOrNull { k -> info[k].bool }
+        return state.copy(
+            model = str("model") ?: state.model,
+            provider = str("provider") ?: state.provider,
+            cwd = str("cwd") ?: state.cwd,
+            contextPercent = info["context_percent"].double ?: state.contextPercent,
+            reasoningEffort = str("reasoning_effort", "reasoning") ?: state.reasoningEffort,
+            fast = bool("fast", "fast_mode") ?: state.fast,
+            yolo = bool("yolo") ?: state.yolo,
+            activeAgents = (info["active_agents"] ?: info["active_subagents"]).let { it.long?.toInt() ?: it.arr?.size } ?: state.activeAgents,
+            running = bool("running") ?: state.running,
+        )
     }
 
     private fun ensureStreaming(messages: List<ChatMessage>): List<ChatMessage> {

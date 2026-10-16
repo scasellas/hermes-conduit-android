@@ -29,6 +29,12 @@ sealed interface StreamEvent {
     data class ContextUpdate(override val sessionId: String, val percent: Double, val used: Long, val max: Long) : StreamEvent
     data class ModelUpdate(override val sessionId: String, val model: String, val provider: String) : StreamEvent
     data class Status(override val sessionId: String, val kind: String, val text: String?) : StreamEvent
+    data class InputPromptRequest(override val sessionId: String, val prompt: InputPrompt) : StreamEvent
+    data class Reaction(override val sessionId: String, val rowId: Long, val reactions: List<MessageReaction>, val role: String) : StreamEvent
+    data class Review(override val sessionId: String, val summary: String) : StreamEvent
+    data class Cwd(override val sessionId: String, val cwd: String) : StreamEvent
+    data class SessionInfo(override val sessionId: String, val info: JsonObject) : StreamEvent
+    data class Subagent(override val sessionId: String, val type: String, val payload: JsonObject) : StreamEvent
     data class Unparsed(override val sessionId: String, val type: String) : StreamEvent
 }
 
@@ -119,12 +125,24 @@ object StreamEventParser {
                 payload?.get("context_used").long ?: 0,
                 payload?.get("context_max").long ?: 0,
             )
+            "message.reaction" -> {
+                val rowId = payload?.get("row_id").long ?: 0
+                if (rowId <= 0) null
+                else StreamEvent.Reaction(sessionId, rowId, MessageNormalizer.reactions(payload?.get("reactions")), payload?.get("role").str.orEmpty())
+            }
+            "review.summary" -> payload?.let { p ->
+                val text = p.firstString("summary", "text", "message", "content") ?: return@let null
+                StreamEvent.Review(sessionId, text)
+            }
+            "cwd.update", "workspace.update" -> StreamEvent.Cwd(sessionId, payload?.get("cwd").str.orEmpty())
+            "session.info" -> StreamEvent.SessionInfo(sessionId, payload ?: JsonObject(emptyMap()))
             "model.update" -> StreamEvent.ModelUpdate(
                 sessionId,
                 payload?.get("model").str.orEmpty(),
                 payload?.get("provider").str.orEmpty(),
             )
-            else -> StreamEvent.Unparsed(sessionId, type)
+            else -> if (type.startsWith("subagent.") && payload != null) StreamEvent.Subagent(sessionId, type, payload)
+            else StreamEvent.Unparsed(sessionId, type)
         }
     }
 

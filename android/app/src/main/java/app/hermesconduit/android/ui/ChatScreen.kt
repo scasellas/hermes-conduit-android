@@ -1,6 +1,7 @@
 package app.hermesconduit.android.ui
 
 import app.hermesconduit.android.core.LinkState
+import app.hermesconduit.android.core.t
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -99,6 +100,18 @@ interface ChatActions {
     fun loadModels()
     fun selectModel(provider: String, model: String, confirmed: Boolean = false)
     fun cancelModelConfirm()
+    fun consumePrefill() {}
+    fun quote(message: ChatMessage) {}
+    fun react(message: ChatMessage, emoji: String) {}
+    fun branchFrom(message: ChatMessage) {}
+    fun runSlash(text: String): Boolean = false
+    fun compress(focusTopic: String) {}
+    fun loadContextBreakdown() {}
+    fun loadDelegates() {}
+    fun setReasoning(effort: String) {}
+    fun setFast(enabled: Boolean) {}
+    fun setYolo(enabled: Boolean) {}
+    fun respondInputPrompt(value: String) {}
 }
 
 @Composable
@@ -106,7 +119,10 @@ fun ChatScreen(viewModel: AppViewModel, showMenuButton: Boolean, onMenu: () -> U
     val chat by viewModel.chat.collectAsStateWithLifecycle()
     val link by viewModel.link.collectAsStateWithLifecycle()
     val models by viewModel.models.collectAsStateWithLifecycle()
-    ChatContent(chat, link, models, viewModel, showMenuButton, onMenu)
+    val slash by viewModel.slashCommands.collectAsStateWithLifecycle()
+    val breakdown by viewModel.contextBreakdown.collectAsStateWithLifecycle()
+    val delegates by viewModel.delegates.collectAsStateWithLifecycle()
+    ChatContent(chat, link, models, viewModel, showMenuButton, onMenu, slash, breakdown, delegates)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -118,8 +134,13 @@ fun ChatContent(
     actions: ChatActions,
     showMenuButton: Boolean,
     onMenu: () -> Unit,
+    slashCommands: List<app.hermesconduit.android.model.SlashCommand> = emptyList(),
+    contextBreakdown: app.hermesconduit.android.model.ContextBreakdown? = null,
+    delegates: List<app.hermesconduit.android.model.DelegateAgent>? = null,
 ) {
     var showModels by remember { mutableStateOf(false) }
+    var showContext by remember { mutableStateOf(false) }
+    var showDelegates by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -155,8 +176,25 @@ fun ChatContent(
                     }
                 },
                 actions = {
-                    chat.contextPercent?.takeIf { it > 0 }?.let {
-                        Text("${it.toInt()}%", style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(end = 12.dp))
+                    if (chat.activeAgents > 0) {
+                        TextButton(onClick = { actions.loadDelegates(); showDelegates = true }) {
+                            Text("⧉ ${chat.activeAgents}", style = MaterialTheme.typography.labelMedium)
+                        }
+                    }
+                    if (chat.yolo) Text("YOLO", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(end = 6.dp))
+                    chat.contextPercent?.takeIf { it > 0 }?.let { raw ->
+                        val percent = if (raw <= 1.0) raw * 100 else raw
+                        TextButton(onClick = { actions.loadContextBreakdown(); showContext = true }) {
+                            Box(contentAlignment = Alignment.Center) {
+                                androidx.compose.material3.CircularProgressIndicator(
+                                    progress = { (percent / 100).toFloat().coerceIn(0f, 1f) },
+                                    modifier = Modifier.size(28.dp),
+                                    strokeWidth = 3.dp,
+                                    color = if (percent > 85) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+                                )
+                                Text("${percent.toInt()}", style = MaterialTheme.typography.labelSmall)
+                            }
+                        }
                     }
                 },
             )
@@ -168,20 +206,28 @@ fun ChatContent(
                 .padding(padding)
                 .imePadding(),
         ) {
-            Transcript(chat, Modifier.weight(1f), onLoadEarlier = actions::loadEarlier)
+            Transcript(chat, Modifier.weight(1f), actions)
             Banner(chat, onDismiss = actions::dismissNotice)
             chat.approval?.let { ApprovalCard(it, onChoice = actions::respondApproval) }
             chat.clarify?.let { ClarifyCard(it, onAnswer = { answers -> actions.answerClarify(it, answers) }) }
+            chat.inputPrompt?.let { InputPromptCard(it, actions::respondInputPrompt) }
             Composer(
                 chat = chat,
                 enabled = link == LinkState.CONNECTED,
                 actions = actions,
+                slashCommands = slashCommands,
             )
         }
     }
 
     if (showModels) {
         ModelSheet(models, chat, actions, onDismiss = { showModels = false })
+    }
+    if (showContext) {
+        ContextSheet(contextBreakdown, onCompress = { actions.compress(""); showContext = false }, onDismiss = { showContext = false })
+    }
+    if (showDelegates) {
+        DelegatesSheet(delegates, onDismiss = { showDelegates = false })
     }
     chat.modelConfirm?.let { confirm ->
         AlertDialog(
@@ -205,7 +251,7 @@ private fun LinkDot(link: LinkState) {
 }
 
 @Composable
-private fun Transcript(chat: ChatState, modifier: Modifier, onLoadEarlier: () -> Unit) {
+private fun Transcript(chat: ChatState, modifier: Modifier, actions: ChatActions) {
     val listState = rememberLazyListState()
     val last = chat.messages.lastOrNull()
     // Follow the stream while the reader is at (or near) the bottom.
@@ -237,51 +283,17 @@ private fun Transcript(chat: ChatState, modifier: Modifier, onLoadEarlier: () ->
         if (chat.hasEarlier) {
             item(key = "earlier") {
                 Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                    TextButton(onClick = onLoadEarlier, enabled = !chat.loading) { Text("Load earlier messages") }
+                    TextButton(onClick = actions::loadEarlier, enabled = !chat.loading) { Text("Load earlier messages") }
                 }
             }
         }
-        items(chat.messages, key = { it.id }) { message -> MessageRow(message) }
+        items(chat.messages, key = { it.id }) { message -> MessageRow(message, actions, canAct = !chat.running || message != chat.messages.lastOrNull()) }
         item(key = "bottom") { Spacer(Modifier.size(1.dp)) }
     }
 }
 
 @Composable
-private fun MessageRow(message: ChatMessage) {
-    when (message.role) {
-        MessageRole.USER -> Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) {
-            Surface(
-                color = MaterialTheme.colorScheme.primaryContainer,
-                shape = RoundedCornerShape(18.dp, 18.dp, 4.dp, 18.dp),
-                modifier = Modifier.widthIn(max = 520.dp),
-            ) {
-                SelectionContainer {
-                    Text(message.content, Modifier.padding(horizontal = 14.dp, vertical = 10.dp), color = MaterialTheme.colorScheme.onPrimaryContainer)
-                }
-            }
-        }
-        MessageRole.SYSTEM -> Text(
-            message.content,
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp),
-        )
-        else -> Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            message.reasoning?.takeIf { it.isNotBlank() }?.let { Reasoning(it, live = message.streaming && message.content.isEmpty()) }
-            message.toolCalls.forEach { ToolCallCard(it) }
-            if (message.content.isNotBlank()) {
-                // Parsed during composition: the async default flashes empty on every streamed delta.
-                val markdown = rememberMarkdownState(message.content, immediate = true)
-                SelectionContainer { Markdown(markdownState = markdown, modifier = Modifier.fillMaxWidth()) }
-            } else if (message.streaming && message.toolCalls.none { it.running } && message.reasoning.isNullOrBlank()) {
-                CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-            }
-        }
-    }
-}
-
-@Composable
-private fun Reasoning(text: String, live: Boolean) {
+internal fun Reasoning(text: String, live: Boolean) {
     var expanded by rememberSaveable { mutableStateOf(false) }
     Column(
         Modifier
@@ -306,7 +318,7 @@ private fun Reasoning(text: String, live: Boolean) {
 }
 
 @Composable
-private fun ToolCallCard(call: ToolCall) {
+internal fun ToolCallCard(call: ToolCall) {
     var expanded by rememberSaveable(call.id, call.name) { mutableStateOf(false) }
     Column(
         Modifier
@@ -333,7 +345,7 @@ private fun ToolCallCard(call: ToolCall) {
 }
 
 @Composable
-private fun CodeBlock(label: String, text: String) {
+internal fun CodeBlock(label: String, text: String) {
     Column {
         Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         SelectionContainer {
@@ -459,11 +471,89 @@ private fun DecisionCard(content: @Composable () -> Unit) {
     }
 }
 
+val reasoningEfforts = listOf("none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra")
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun RunSettings(chat: ChatState, actions: ChatActions) {
+    Column(Modifier.padding(horizontal = 20.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(t("Reasoning"), style = MaterialTheme.typography.titleSmall)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            reasoningEfforts.forEach { effort ->
+                FilterChip(selected = chat.reasoningEffort == effort, onClick = { actions.setReasoning(effort) }, label = { Text(effort) })
+            }
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(t("Fast mode"), Modifier.weight(1f))
+            androidx.compose.material3.Switch(checked = chat.fast, onCheckedChange = actions::setFast)
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(t("YOLO for this chat"))
+                Text(t("Approve every tool call automatically"), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            androidx.compose.material3.Switch(checked = chat.yolo, onCheckedChange = actions::setYolo)
+        }
+        androidx.compose.material3.HorizontalDivider()
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ContextSheet(breakdown: app.hermesconduit.android.model.ContextBreakdown?, onCompress: () -> Unit, onDismiss: () -> Unit) {
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text(t("Context"), style = MaterialTheme.typography.titleLarge)
+            if (breakdown == null) {
+                CircularProgressIndicator()
+            } else {
+                Text(
+                    "${"%,d".format(breakdown.resolvedUsed)} / ${"%,d".format(breakdown.contextMax)} " + t("tokens") + " · ${breakdown.resolvedPercent.toInt()}%",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                androidx.compose.material3.LinearProgressIndicator(
+                    progress = { (breakdown.resolvedPercent / 100).toFloat().coerceIn(0f, 1f) },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                breakdown.categories.forEach { c ->
+                    Row {
+                        Text(c.label, Modifier.weight(1f))
+                        Text("%,d".format(c.tokens), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
+            Button(onClick = onCompress) { Text(t("Compress conversation")) }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun DelegatesSheet(agents: List<app.hermesconduit.android.model.DelegateAgent>?, onDismiss: () -> Unit) {
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text(t("Delegate agents"), style = MaterialTheme.typography.titleLarge)
+            when {
+                agents == null -> CircularProgressIndicator()
+                agents.isEmpty() -> Text(t("No delegate agents are running."))
+                else -> agents.forEach { a ->
+                    Column {
+                        Text(a.goal.ifEmpty { t("Delegate agent") }, style = MaterialTheme.typography.bodyLarge)
+                        Text(listOfNotNull(a.status, a.model, a.currentTool).joinToString(" · "), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        a.summary?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+                    }
+                }
+            }
+        }
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 private fun ModelSheet(options: ModelOptions?, chat: ChatState, actions: ChatActions, onDismiss: () -> Unit) {
     ModalBottomSheet(onDismissRequest = onDismiss) {
-        Text("Model", style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(horizontal = 20.dp))
+        Text(t("Model"), style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(horizontal = 20.dp))
+        RunSettings(chat, actions)
         val current = options
         if (current == null) {
             Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() }

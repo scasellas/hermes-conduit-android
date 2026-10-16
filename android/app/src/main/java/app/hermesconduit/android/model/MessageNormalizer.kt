@@ -68,6 +68,8 @@ object MessageNormalizer {
 
             val rawRole = (row["role"].str ?: row["type"].str ?: "").lowercase()
             val id = (row["id"] ?: row["message_id"]).str ?: "row-$index"
+            val rowId = row["row_id"].long ?: (row["id"] as? JsonPrimitive)?.takeIf { !it.isString }?.long
+            val reactions = reactions(displayMetadata(row["display_metadata"])?.get("reactions"))
             val timestamp = timestamp(row)
             var content = (row["display_content"].str ?: contentText(row["content"] ?: row["text"])).orEmpty()
 
@@ -105,11 +107,12 @@ object MessageNormalizer {
                     val reasoning = row.firstString("reasoning", "reasoning_content")
                     val calls = (row["tool_calls"] ?: row["tools"]).arr?.mapNotNull { it.obj?.let(::toolCall) }.orEmpty()
                     if (content.isBlank() && reasoning == null && calls.isEmpty()) return@forEachIndexed
-                    result += ChatMessage(id, role, content, reasoning, calls, timestamp)
+                    result += ChatMessage(id, role, content, reasoning, calls, timestamp, rowId = rowId, reactions = reactions)
                 }
                 MessageRole.USER -> {
-                    if (displayKind?.trim() == "steer") content = steerText(content)
-                    result += ChatMessage(id, role, content, timestampMs = timestamp)
+                    val steer = displayKind?.trim() == "steer"
+                    if (steer) content = steerText(content)
+                    result += ChatMessage(id, role, content, timestampMs = timestamp, rowId = rowId, reactions = reactions, isSteer = steer)
                 }
                 MessageRole.SYSTEM -> if (content.isNotBlank()) {
                     result += ChatMessage(id, role, content, timestampMs = timestamp)
@@ -132,6 +135,121 @@ object MessageNormalizer {
         if (body.endsWith(closer)) body = body.dropLast(closer.length)
         return body.trim()
     }
+
+    /** `display_metadata` arrives as an object or a JSON string. */
+    fun displayMetadata(value: JsonElement?): JsonObject? = when (value) {
+        is JsonObject -> value
+        is JsonPrimitive -> value.str?.let { runCatching { ConduitJson.parseToJsonElement(it) as? JsonObject }.getOrNull() }
+        else -> null
+    }
+
+    fun reactions(value: JsonElement?): List<app.hermesconduit.android.model.MessageReaction> = value.arr?.mapNotNull { entry ->
+        val obj = entry.obj ?: return@mapNotNull null
+        val emoji = obj["emoji"].str?.trim()?.takeIf { it.isNotEmpty() } ?: return@mapNotNull null
+        val author = obj["author"].str?.trim()?.takeIf { it.isNotEmpty() } ?: return@mapNotNull null
+        app.hermesconduit.android.model.MessageReaction(emoji, author, obj["at"].double)
+    }.orEmpty()
+
+    fun inputPrompt(requestId: String, method: String, params: JsonObject?): InputPrompt? {
+        if (method !in InputPrompt.kinds || requestId.isEmpty()) return null
+        val session = params?.get("session_id").str?.trim().orEmpty()
+        if (session.isEmpty()) return null
+        fun text(key: String) = params?.get(key).str?.trim().orEmpty()
+        return InputPrompt(
+            requestId = requestId,
+            sessionId = session,
+            kind = method,
+            command = text("command"),
+            envVar = text("env_var"),
+            prompt = text("prompt"),
+            displayName = text("display_name").ifEmpty { text("backend") },
+        )
+    }
+
+    fun contextBreakdown(result: JsonObject?): ContextBreakdown = ContextBreakdown(
+        categories = result?.get("categories").arr?.mapNotNull { c ->
+            val o = c.obj ?: return@mapNotNull null
+            val id = o["id"].str ?: return@mapNotNull null
+            val label = o["label"].str ?: return@mapNotNull null
+            ContextCategory(id, label, o["tokens"].long ?: 0, o["color"].str ?: "amber")
+        }.orEmpty(),
+        contextMax = result?.get("context_max").long ?: 0,
+        contextPercent = result?.get("context_percent").double ?: 0.0,
+        contextUsed = result?.get("context_used").long ?: 0,
+        estimatedTotal = result?.get("estimated_total").long ?: 0,
+        model = result?.get("model").str,
+    )
+
+    fun delegateAgents(result: JsonElement?): List<DelegateAgent> {
+        val rows = result.obj?.let { it["subagents"].arr ?: it["agents"].arr ?: it["items"].arr } ?: result.arr ?: return emptyList()
+        return rows.mapIndexedNotNull { index, element ->
+            val o = element.obj ?: return@mapIndexedNotNull null
+            DelegateAgent(
+                id = o.firstString("subagent_id", "id", "agent_id") ?: "agent-$index",
+                goal = o.firstString("goal", "task") ?: "",
+                status = o.firstString("status") ?: "running",
+                model = o.firstString("model"),
+                currentTool = o.firstString("tool_name", "tool", "current_tool"),
+                summary = o.firstString("summary", "text", "message"),
+            )
+        }
+    }
+
+    // region Slash commands
+
+    fun normalizedSlashName(value: String) = value.trim().trimStart('/').lowercase()
+
+    /** `/name rest` → (name, argument, cleaned) or null. */
+    fun parseSlash(text: String): Triple<String, String, String>? {
+        val trimmed = text.trimStart()
+        if (!trimmed.startsWith("/")) return null
+        val cleaned = trimmed.trimStart('/').trim()
+        val parts = cleaned.split(Regex("\\s+"), limit = 2)
+        val first = parts.firstOrNull()?.takeIf { it.isNotEmpty() } ?: return null
+        return Triple(normalizedSlashName(first), parts.getOrElse(1) { "" }, cleaned)
+    }
+
+    fun slashCatalog(payload: JsonElement?, builtIns: List<SlashCommand>): List<SlashCommand> {
+        val obj = payload.obj
+        val commands = linkedMapOf<String, SlashCommand>()
+        fun add(c: SlashCommand?) { if (c != null && c.name.isNotEmpty() && c.name !in commands) commands[c.name] = c }
+        fun from(value: JsonElement, category: String?): SlashCommand? {
+            value.arr?.let { pair ->
+                val name = normalizedSlashName(pair.firstOrNull().str ?: return null)
+                if (name.isEmpty()) return null
+                val description = pair.getOrNull(1).str?.trim()?.takeIf { it.isNotEmpty() } ?: "Hermes command"
+                return SlashCommand(name, description, category = category)
+            }
+            val o = value.obj ?: return null
+            val name = normalizedSlashName(o.firstString("name", "command") ?: return null)
+            if (name.isEmpty()) return null
+            return SlashCommand(
+                name = name,
+                description = o.firstString("description", "desc") ?: "Hermes command",
+                aliases = o["aliases"].arr?.mapNotNull { it.str?.let(::normalizedSlashName)?.takeIf(String::isNotEmpty) }.orEmpty(),
+                category = category,
+                argsHint = o.firstString("args_hint", "argsHint"),
+            )
+        }
+        obj?.get("categories").arr?.forEach { category ->
+            val c = category.obj ?: return@forEach
+            val name = c["name"].str?.trim()
+            c["pairs"].arr?.forEach { add(from(it, name)) }
+        }
+        obj?.get("pairs").arr?.forEach { add(from(it, "Skills & extensions")) }
+        obj?.get("canon").obj?.forEach { (rawAlias, rawCanonical) ->
+            val alias = normalizedSlashName(rawAlias)
+            val canonical = normalizedSlashName(rawCanonical.str.orEmpty())
+            val command = commands[canonical] ?: return@forEach
+            if (alias.isNotEmpty() && alias != canonical && alias !in command.aliases) {
+                commands[canonical] = command.copy(aliases = (command.aliases + alias).sorted())
+            }
+        }
+        builtIns.forEach { if (it.name !in commands) commands[it.name] = it }
+        return commands.values.sortedBy { it.name }
+    }
+
+    // endregion
 
     private fun unwrap(row: JsonObject): JsonObject {
         val inner = row["message"].obj ?: row["payload"].obj

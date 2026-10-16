@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import app.hermesconduit.android.core.HermesConnection
+import app.hermesconduit.android.core.L10n
 import app.hermesconduit.android.core.LinkState
 import app.hermesconduit.android.data.SavedConnection
 import app.hermesconduit.android.hermes
@@ -17,6 +18,7 @@ import app.hermesconduit.android.model.StreamEvent
 import app.hermesconduit.android.model.bool
 import app.hermesconduit.android.model.double
 import app.hermesconduit.android.model.firstString
+import app.hermesconduit.android.model.long
 import app.hermesconduit.android.model.obj
 import app.hermesconduit.android.model.str
 import app.hermesconduit.android.net.AuthExpiredException
@@ -347,12 +349,19 @@ class AppViewModel(application: Application) : AndroidViewModel(application), Ch
             ).obj
             val info = result?.get("info").obj
             val running = result?.get("running").bool ?: info?.get("running").bool ?: false
+            val runtime = result?.get("session_id").str
+            val openRequests = result?.get("open_requests") as? JsonArray
+            val inputPrompt = openRequests?.firstNotNullOfOrNull { element ->
+                val request = element.obj ?: return@firstNotNullOfOrNull null
+                MessageNormalizer.inputPrompt(request["id"].str.orEmpty(), request["method"].str.orEmpty(), request["params"].obj)
+            }
             val pendingApproval = result?.get("pending_approval").obj
                 ?.let { MessageNormalizer.approvalRequest(it, result?.get("session_id").str.orEmpty()) }
             _chat.update {
                 if (it.sessionId != sessionId) it
-                else it.copy(
-                    runtimeId = result?.get("session_id").str ?: it.runtimeId,
+                else (if (info != null) ChatReducer.applyInfo(it, info) else it).copy(
+                    inputPrompt = inputPrompt ?: it.inputPrompt,
+                    runtimeId = runtime ?: it.runtimeId,
                     running = running,
                     model = info?.get("model").str ?: it.model,
                     provider = info?.get("provider").str ?: it.provider,
@@ -369,10 +378,276 @@ class AppViewModel(application: Application) : AndroidViewModel(application), Ch
                         ?.let { clarify -> _chat.update { if (it.sessionId == sessionId) it.copy(clarify = clarify) else it } }
                 }
             }
+            // Approvals raised before this socket attached aren't re-sent as events.
+            if (runtime != null && pendingApproval == null) {
+                runCatching { hermes.rpc("approval.pending", buildJsonObject { put("session_id", runtime) }).obj }
+                    .getOrNull()?.get("approvals").let { it as? JsonArray }?.firstOrNull()?.obj
+                    ?.let { MessageNormalizer.approvalRequest(it, runtime) }
+                    ?.let { approval -> _chat.update { c -> if (c.sessionId == sessionId) c.copy(approval = approval) else c } }
+            }
+            loadSlashCatalog()
         } catch (e: Exception) {
             _chat.update { if (it.sessionId != sessionId) it else it.copy(loading = false) }
         }
     }
+
+    // region Chat extras
+
+    private val _slashCommands = MutableStateFlow(SlashCommands.builtIns())
+    val slashCommands: StateFlow<List<app.hermesconduit.android.model.SlashCommand>> = _slashCommands
+
+    private val _contextBreakdown = MutableStateFlow<app.hermesconduit.android.model.ContextBreakdown?>(null)
+    val contextBreakdown: StateFlow<app.hermesconduit.android.model.ContextBreakdown?> = _contextBreakdown
+
+    private val _delegates = MutableStateFlow<List<app.hermesconduit.android.model.DelegateAgent>?>(null)
+    val delegates: StateFlow<List<app.hermesconduit.android.model.DelegateAgent>?> = _delegates
+
+    private fun loadSlashCatalog() {
+        viewModelScope.launch {
+            val result = runCatching {
+                hermes.rpc("commands.catalog", buildJsonObject { _chat.value.runtimeId?.let { put("session_id", it) } })
+            }.getOrNull() ?: return@launch
+            _slashCommands.value = MessageNormalizer.slashCatalog(result, SlashCommands.builtIns())
+        }
+    }
+
+    override fun consumePrefill() = _chat.update { it.copy(prefill = null) }
+
+    override fun quote(message: ChatMessage) {
+        val quoted = message.content.trim().lines().joinToString("\n") { "> $it" }
+        _chat.update { it.copy(prefill = "$quoted\n\n") }
+    }
+
+    override fun react(message: ChatMessage, emoji: String) {
+        val runtimeId = _chat.value.runtimeId ?: return
+        val mine = message.reactions.firstOrNull { it.isFromUser }?.emoji
+        val next = if (mine == emoji) null else emoji
+        val optimistic = app.hermesconduit.android.model.MessageReaction.applying(next, app.hermesconduit.android.model.MessageReaction.USER, message.reactions)
+        _chat.update { c -> c.copy(messages = c.messages.map { if (it.id == message.id) it.copy(reactions = optimistic) else it }) }
+        viewModelScope.launch {
+            try {
+                val result = hermes.rpc(
+                    "message.react",
+                    buildJsonObject {
+                        put("session_id", runtimeId)
+                        put("author", app.hermesconduit.android.model.MessageReaction.USER)
+                        if (next == null) put("emoji", kotlinx.serialization.json.JsonNull) else put("emoji", next)
+                        if (message.rowId != null) put("row_id", message.rowId)
+                        else put("newest_role", if (message.role == MessageRole.USER) "user" else "assistant")
+                    },
+                ).obj
+                val rowId = result?.get("row_id").long
+                val reactions = MessageNormalizer.reactions(result?.get("reactions"))
+                _chat.update { c -> c.copy(messages = c.messages.map { if (it.id == message.id) it.copy(rowId = rowId ?: it.rowId, reactions = reactions) else it }) }
+            } catch (e: Exception) {
+                _chat.update { c -> c.copy(error = e.message, messages = c.messages.map { if (it.id == message.id) it.copy(reactions = message.reactions) else it }) }
+            }
+        }
+    }
+
+    /** Forks a new chat whose history ends at [message] (an assistant reply). */
+    override fun branchFrom(message: ChatMessage) {
+        val chat = _chat.value
+        val parent = chat.runtimeId ?: chat.sessionId ?: return
+        if (chat.running) {
+            _chat.update { it.copy(error = L10n.tr("Stop the active response before branching this conversation.")) }
+            return
+        }
+        val index = chat.messages.indexOfFirst { it.id == message.id }
+        if (index < 0) return
+        val history = chat.messages.subList(0, index + 1)
+            .filter { (it.role == MessageRole.USER || it.role == MessageRole.ASSISTANT) && it.content.isNotBlank() }
+        if (history.isEmpty()) {
+            _chat.update { it.copy(error = L10n.tr("There is no message history to branch from.")) }
+            return
+        }
+        val title = L10n.tr("Branch of %s", chat.title)
+        viewModelScope.launch {
+            try {
+                val created = hermes.rpc(
+                    "session.create",
+                    buildJsonObject {
+                        put("cols", 96)
+                        put("source", "desktop")
+                        put("parent_session_id", parent)
+                        put("title", title)
+                        put("messages", kotlinx.serialization.json.buildJsonArray {
+                            history.forEach { m ->
+                                add(buildJsonObject {
+                                    put("role", if (m.role == MessageRole.USER) "user" else "assistant")
+                                    put("content", m.content)
+                                })
+                            }
+                        })
+                        chat.cwd?.let { put("cwd", it) }
+                    },
+                ).obj
+                val runtime = created?.get("session_id").str ?: error("The gateway didn't create a session.")
+                val stored = created?.get("stored_session_id").str ?: runtime
+                _chat.value = ChatState(
+                    sessionId = stored,
+                    runtimeId = runtime,
+                    title = title,
+                    messages = history,
+                    model = chat.model,
+                    provider = chat.provider,
+                )
+                refreshSessions()
+            } catch (e: Exception) {
+                _chat.update { it.copy(error = e.message ?: L10n.tr("Couldn't branch this conversation.")) }
+            }
+        }
+    }
+
+    private suspend fun ensureRuntime(): String? {
+        _chat.value.runtimeId?.let { return it }
+        val created = hermes.rpc("session.create", buildJsonObject { put("cols", 96); put("source", "desktop") }).obj
+        val runtime = created?.get("session_id").str ?: return null
+        val stored = created?.get("stored_session_id").str ?: runtime
+        _chat.update { it.copy(runtimeId = runtime, sessionId = stored) }
+        return runtime
+    }
+
+    /** Runs a `/command`; returns false when [text] isn't one. */
+    override fun runSlash(text: String): Boolean {
+        val (name, argument, cleaned) = MessageNormalizer.parseSlash(text) ?: return false
+        appendLocal(MessageRole.USER, text.trim())
+        when (name) {
+            "new", "reset" -> { newChat(); return true }
+            "branch", "fork" -> {
+                val last = _chat.value.messages.lastOrNull { it.role == MessageRole.ASSISTANT }
+                if (last == null) _chat.update { it.copy(error = L10n.tr("There is no assistant response to branch from yet.")) } else branchFrom(last)
+                return true
+            }
+            "help", "commands" -> { appendSlashOutput(SlashCommands.help(_slashCommands.value)); return true }
+            "yolo" -> if (argument.isEmpty()) { setYolo(!_chat.value.yolo); return true }
+            "compress", "compact" -> { compress(argument); return true }
+            "model" -> if (argument.isEmpty()) { _chat.update { it.copy(notice = L10n.tr("Tap the model name at the top to change models.")) }; return true }
+        }
+        viewModelScope.launch {
+            try {
+                val runtime = ensureRuntime() ?: error("The gateway didn't create a session.")
+                handleSlashResult(executeGatewaySlash(runtime, cleaned), 0, argument, runtime)
+            } catch (e: Exception) {
+                appendSlashOutput(L10n.tr("⚠️ Command failed: %s", e.message ?: ""))
+            }
+        }
+        return true
+    }
+
+    private suspend fun executeGatewaySlash(runtime: String, command: String): kotlinx.serialization.json.JsonElement = try {
+        hermes.rpc("slash.exec", buildJsonObject { put("session_id", runtime); put("command", command.trimStart('/')) })
+    } catch (rejection: app.hermesconduit.android.net.RpcException) {
+        val (name, arg, _) = MessageNormalizer.parseSlash("/$command") ?: throw rejection
+        try {
+            hermes.rpc("command.dispatch", buildJsonObject { put("session_id", runtime); put("name", name); put("arg", arg) })
+        } catch (e: Exception) {
+            if ("command.dispatch" in (rejection.message ?: "")) throw e
+            throw rejection
+        }
+    }
+
+    private suspend fun handleSlashResult(result: kotlinx.serialization.json.JsonElement, depth: Int, aliasArgument: String, runtime: String) {
+        if (depth >= 4) { appendSlashOutput(L10n.tr("⚠️ Too many command aliases.")); return }
+        val obj = result.obj ?: return
+        val output = obj.firstString("output", "message", "notice").orEmpty()
+        when (obj["type"].str.orEmpty()) {
+            "exec", "plugin" -> if (output.isNotEmpty()) appendSlashOutput(output)
+            "send", "skill" -> (obj["message"].str ?: output).takeIf { it.isNotEmpty() }?.let { sendRaw(it) }
+            "prefill" -> {
+                obj["notice"].str?.takeIf { it.isNotEmpty() }?.let(::appendSlashOutput)
+                (obj["message"].str ?: output).takeIf { it.isNotEmpty() }?.let { m -> _chat.update { it.copy(prefill = m) } }
+            }
+            "alias" -> {
+                val target = obj.firstString("target", "command", "name") ?: return
+                val nested = executeGatewaySlash(runtime, if (aliasArgument.isEmpty()) target else "$target $aliasArgument")
+                handleSlashResult(nested, depth + 1, aliasArgument, runtime)
+            }
+            else -> if (output.isNotEmpty()) appendSlashOutput(output)
+        }
+    }
+
+    /** Sends [text] as a prompt without echoing it again. */
+    private fun sendRaw(text: String) = send(text, emptyList(), null)
+
+    private fun appendLocal(role: MessageRole, text: String) {
+        _chat.update { it.copy(messages = it.messages + ChatMessage("local-${System.nanoTime()}", role, text, timestampMs = System.currentTimeMillis())) }
+    }
+
+    private fun appendSlashOutput(text: String) {
+        _chat.update { it.copy(messages = it.messages + ChatMessage("slash-${System.nanoTime()}", MessageRole.SYSTEM, text, kind = "slash", timestampMs = System.currentTimeMillis())) }
+    }
+
+    override fun compress(focusTopic: String) {
+        viewModelScope.launch {
+            _chat.update { it.copy(compacting = true, notice = L10n.tr("Compressing this conversation…")) }
+            try {
+                val runtime = ensureRuntime() ?: error("No session.")
+                val result = hermes.rpc(
+                    "session.compress",
+                    buildJsonObject {
+                        put("session_id", runtime)
+                        focusTopic.trim().takeIf { it.isNotEmpty() }?.let { put("focus_topic", it) }
+                    },
+                    660_000,
+                ).obj
+                val summary = result?.firstString("summary", "message", "output")
+                _chat.update { it.copy(compacting = false, notice = summary ?: L10n.tr("Context compacted.")) }
+            } catch (e: Exception) {
+                _chat.update { it.copy(compacting = false, notice = null, error = L10n.tr("Compression failed: %s", e.message ?: "")) }
+            }
+        }
+    }
+
+    override fun loadContextBreakdown() {
+        val runtime = _chat.value.runtimeId ?: return
+        _contextBreakdown.value = null
+        viewModelScope.launch {
+            runCatching { hermes.rpc("session.context_breakdown", buildJsonObject { put("session_id", runtime) }).obj }
+                .onSuccess { _contextBreakdown.value = MessageNormalizer.contextBreakdown(it) }
+                .onFailure { e -> _chat.update { it.copy(error = e.message) } }
+        }
+    }
+
+    override fun loadDelegates() {
+        val runtime = _chat.value.runtimeId ?: return
+        _delegates.value = null
+        viewModelScope.launch {
+            runCatching { hermes.rpc("subagent.list", buildJsonObject { put("session_id", runtime) }) }
+                .onSuccess { _delegates.value = MessageNormalizer.delegateAgents(it) }
+                .onFailure { _delegates.value = emptyList() }
+        }
+    }
+
+    private fun configSet(key: String, value: String, apply: (ChatState) -> ChatState) {
+        val runtime = _chat.value.runtimeId
+        if (runtime == null) {
+            _chat.update { it.copy(notice = L10n.tr("Send a first message, then change this chat's settings.")) }
+            return
+        }
+        val before = _chat.value
+        _chat.update(apply)
+        viewModelScope.launch {
+            runCatching {
+                hermes.rpc("config.set", buildJsonObject { put("key", key); put("session_id", runtime); put("value", value) })
+            }.onFailure { e -> _chat.update { it.copy(error = e.message, reasoningEffort = before.reasoningEffort, fast = before.fast, yolo = before.yolo) } }
+        }
+    }
+
+    override fun setReasoning(effort: String) = configSet("reasoning", effort) { it.copy(reasoningEffort = effort) }
+
+    override fun setFast(enabled: Boolean) = configSet("fast", if (enabled) "fast" else "normal") { it.copy(fast = enabled) }
+
+    override fun setYolo(enabled: Boolean) = configSet("yolo", if (enabled) "1" else "0") { it.copy(yolo = enabled) }
+
+    /** Answers a sudo/secret/vault request; an empty value skips. */
+    override fun respondInputPrompt(value: String) {
+        val prompt = _chat.value.inputPrompt ?: return
+        hermes.respond(prompt.requestId, buildJsonObject { put("value", value) })
+        _chat.update { it.copy(inputPrompt = null) }
+    }
+
+    // endregion
 
     override fun loadEarlier() {
         val chat = _chat.value

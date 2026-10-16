@@ -62,8 +62,20 @@ class ScreenshotTest {
         ConduitTheme(dark = true) { LoginScreen(Screen.Login("http://192.168.1.10:9119", error = "Incorrect username or password."), onSignIn = { _, _, _, _, _ -> }) }
     }
 
+    private val registryOwner = object : androidx.activity.result.ActivityResultRegistryOwner {
+        override val activityResultRegistry = object : androidx.activity.result.ActivityResultRegistry() {
+            override fun <I, O> onLaunch(
+                requestCode: Int,
+                contract: androidx.activity.result.contract.ActivityResultContract<I, O>,
+                input: I,
+                options: androidx.core.app.ActivityOptionsCompat?,
+            ) = Unit
+        }
+    }
+
     @Test
     fun chat() = paparazzi.snapshot {
+        androidx.compose.runtime.CompositionLocalProvider(androidx.activity.compose.LocalActivityResultRegistryOwner provides registryOwner) {
         ConduitTheme(dark = true) {
             ChatContent(
                 chat = ChatState(
@@ -93,6 +105,7 @@ class ScreenshotTest {
                 showMenuButton = true,
                 onMenu = {},
             )
+        }
         }
     }
 

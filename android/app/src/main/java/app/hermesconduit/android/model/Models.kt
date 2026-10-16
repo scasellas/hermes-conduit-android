@@ -34,6 +34,89 @@ data class ChatMessage(
     val toolCalls: List<ToolCall> = emptyList(),
     val timestampMs: Long? = null,
     val streaming: Boolean = false,
+    /** Durable `messages.id` reactions address (null for live rows). */
+    val rowId: Long? = null,
+    val reactions: List<MessageReaction> = emptyList(),
+    /** A mid-turn steer delivered to the running turn. */
+    val isSteer: Boolean = false,
+    /** Special system rows: "slash", "model_change", "review", "compaction". */
+    val kind: String? = null,
+)
+
+data class MessageReaction(val emoji: String, val author: String, val at: Double? = null) {
+    val isFromUser: Boolean get() = author == USER
+
+    companion object {
+        const val USER = "user"
+        const val AGENT = "agent"
+        /** The six reactions the picker offers, in order. */
+        val tapbacks = listOf("👍", "👎", "❤️", "😂", "😮", "😢")
+
+        /** Hermes' `set_message_reaction` rules: one reaction per author; the same emoji retracts. */
+        fun applying(emoji: String?, author: String, to: List<MessageReaction>, at: Double = System.currentTimeMillis() / 1000.0): List<MessageReaction> {
+            val previous = to.firstOrNull { it.author == author }
+            val result = to.filter { it.author != author }.toMutableList()
+            if (!emoji.isNullOrEmpty() && previous?.emoji != emoji) result += MessageReaction(emoji, author, at)
+            return result
+        }
+    }
+}
+
+/** A sudo / secret / vault-unlock server request answered with a masked value. */
+data class InputPrompt(
+    val requestId: String,
+    val sessionId: String,
+    /** "sudo", "secret" or "vault.unlock_prompt". */
+    val kind: String,
+    val command: String = "",
+    val envVar: String = "",
+    val prompt: String = "",
+    val displayName: String = "",
+) {
+    companion object {
+        val kinds = setOf("sudo", "secret", "vault.unlock_prompt")
+    }
+}
+
+data class SlashCommand(
+    val name: String,
+    val description: String,
+    val aliases: List<String> = emptyList(),
+    val category: String? = null,
+    val argsHint: String? = null,
+)
+
+data class ContextCategory(val id: String, val label: String, val tokens: Long, val color: String)
+
+data class ContextBreakdown(
+    val categories: List<ContextCategory>,
+    val contextMax: Long,
+    val contextPercent: Double,
+    val contextUsed: Long,
+    val estimatedTotal: Long,
+    val model: String?,
+) {
+    val resolvedUsed: Long get() = when {
+        contextUsed > 0 -> contextUsed
+        estimatedTotal > 0 -> estimatedTotal
+        else -> categories.sumOf { it.tokens }
+    }
+
+    /** 0…100; Hermes has reported both fractions and percentages. */
+    val resolvedPercent: Double get() = when {
+        contextPercent > 0 -> if (contextPercent <= 1.0) contextPercent * 100 else contextPercent
+        contextMax > 0 -> resolvedUsed * 100.0 / contextMax
+        else -> 0.0
+    }
+}
+
+data class DelegateAgent(
+    val id: String,
+    val goal: String,
+    val status: String,
+    val model: String?,
+    val currentTool: String?,
+    val summary: String?,
 )
 
 data class ApprovalRequest(

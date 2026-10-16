@@ -17,4 +17,9 @@ class ConduitApplication : Application() {
 }
 
 val Context.hermes: HermesConnection get() = (applicationContext as ConduitApplication).connection
-val Context.appSettings: AppSettings get() = (applicationContext as ConduitApplication).settings
+private var fallbackSettings: AppSettings? = null
+
+/** App preferences; previews and screenshot tests (no ConduitApplication) get a standalone store. */
+val Context.appSettings: AppSettings
+    get() = (applicationContext as? ConduitApplication)?.settings
+        ?: fallbackSettings ?: AppSettings(applicationContext ?: this).also { fallbackSettings = it }

@@ -216,12 +216,17 @@ class GatewayClient(
                 else _events.tryEmit(StreamEvent.Clarify(sessionId, clarify))
             }
             "sudo", "secret", "vault.unlock_prompt" -> {
-                // Masked input prompts aren't supported yet: skip them so the turn continues.
-                respond(id, buildJsonObject { put("value", "") })
-                _events.tryEmit(
-                    StreamEvent.Status(sessionId, "input_skipped", "Hermes asked for a $method input, which this app can't provide yet."),
-                )
+                val prompt = MessageNormalizer.inputPrompt(id, method, params)
+                if (prompt == null) respond(id, buildJsonObject { put("value", "") })
+                else _events.tryEmit(StreamEvent.InputPromptRequest(prompt.sessionId, prompt))
             }
+            "preview.read", "preview.act", "terminal.read", "window.read", "tour" ->
+                // Window-owned requests: a gateway that understands "not shown" gets 4404.
+                if (capabilities?.get("declines_not_shown").let { it is JsonPrimitive && it.content == "true" }) {
+                    respondError(id, 4404, "not shown")
+                } else {
+                    respondError(id, -32601, "no handler for server request: $method")
+                }
             else -> respondError(id, -32601, "no handler for server request: $method")
         }
     }
