@@ -169,7 +169,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application), Ch
                 hermes.signInWithPassword(candidate)
                 onSignedIn()
             } catch (e: Exception) {
-                _screen.value = Screen.Login(url, e.message ?: "Couldn't sign in.", canCancel = canCancel)
+                val failure = app.hermesconduit.android.net.ConnectionFailure.classify(e)
+                val text = if (failure == app.hermesconduit.android.net.ConnectionFailure.UNKNOWN) e.message ?: failure.detail else "${failure.title}. ${failure.detail}"
+                _screen.value = Screen.Login(url, text, canCancel = canCancel)
             }
         }
     }
@@ -225,6 +227,20 @@ class AppViewModel(application: Application) : AndroidViewModel(application), Ch
         _screen.value = Screen.Main
         startSession()
     }
+
+    private val _connectionTest = MutableStateFlow<ConnectionTestResult?>(null)
+    val connectionTest: StateFlow<ConnectionTestResult?> = _connectionTest
+
+    fun testConnection(url: String, username: String, password: String, cfId: String, cfSecret: String) {
+        val candidate = candidate(url, username, password, cfId, cfSecret)
+        if (candidate == null) {
+            _connectionTest.value = ConnectionTestResult(listOf(L10n.tr("Dashboard reachable") to "failed"), app.hermesconduit.android.net.ConnectionFailure.INVALID_ADDRESS)
+            return
+        }
+        viewModelScope.launch { ConnectionTest.run(candidate, hermes.baseHttp, viewModelScope) { _connectionTest.value = it } }
+    }
+
+    fun dismissConnectionTest() { _connectionTest.value = null }
 
     /** Shows the sign-in form to add another dashboard. */
     override fun addDashboard() {

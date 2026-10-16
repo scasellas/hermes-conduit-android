@@ -42,6 +42,9 @@ fun ConduitApp(viewModel: AppViewModel) {
                     }
                 },
                 onCancel = viewModel::cancelAddDashboard,
+                onTest = viewModel::testConnection,
+                testResult = viewModel.connectionTest.collectAsStateWithLifecycle().value,
+                onDismissTest = viewModel::dismissConnectionTest,
             )
         }
         Screen.Main -> MainNavigation(viewModel)

@@ -44,6 +44,9 @@ fun LoginScreen(
     onSignIn: (String, String, String, String, String) -> Unit,
     onBrowserSignIn: (String, String, String) -> Unit = { _, _, _ -> },
     onCancel: () -> Unit = {},
+    onTest: ((String, String, String, String, String) -> Unit)? = null,
+    testResult: ConnectionTestResult? = null,
+    onDismissTest: () -> Unit = {},
 ) {
     var url by rememberSaveable { mutableStateOf(state.prefillUrl) }
     var username by rememberSaveable { mutableStateOf("") }
@@ -58,6 +61,26 @@ fun LoginScreen(
         }
     }
 
+    if (testResult != null) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = onDismissTest,
+            title = { Text(app.hermesconduit.android.core.t("Connection test")) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    testResult.stages.forEach { (label, status) ->
+                        val mark = when (status) { "passed" -> "✓"; "failed" -> "✕"; "checking" -> "…"; "waiting" -> "○"; else -> "!" }
+                        Text("$mark  $label")
+                    }
+                    testResult.failure?.let {
+                        Text(it.title, style = MaterialTheme.typography.titleSmall)
+                        Text(it.detail, style = MaterialTheme.typography.bodySmall)
+                    }
+                    testResult.message?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+                }
+            },
+            confirmButton = { TextButton(onClick = onDismissTest) { Text(app.hermesconduit.android.core.t("Done")) } },
+        )
+    }
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Column(
             Modifier
@@ -136,6 +159,13 @@ fun LoginScreen(
                     enabled = !state.busy && url.isNotBlank(),
                     modifier = Modifier.fillMaxWidth().height(52.dp),
                 ) { Text("Sign in with browser (Google, OIDC…)") }
+                if (onTest != null) {
+                    TextButton(
+                        onClick = { onTest(url, username, password, if (useServiceToken) cfId else "", if (useServiceToken) cfSecret else "") },
+                        enabled = !state.busy && url.isNotBlank(),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text(app.hermesconduit.android.core.t("Test Connection")) }
+                }
                 if (state.canCancel) {
                     TextButton(onClick = onCancel, modifier = Modifier.fillMaxWidth()) { Text("Cancel") }
                 }
