@@ -18,6 +18,7 @@ class ConduitApplication : Application() {
         app.hermesconduit.android.notify.ForegroundState.install()
         notifications.start()
         app.hermesconduit.android.notify.ConnectionService.sync(this)
+        app.hermesconduit.android.ui.device.DeviceSharing.start(this)
     }
 }
 

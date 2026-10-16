@@ -16,6 +16,9 @@ import androidx.compose.material.icons.filled.Chat
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.CalendarMonth
+import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.vector.ImageVector
 import app.hermesconduit.android.ui.capabilities.CapabilitiesScreen
@@ -60,6 +63,9 @@ val features: List<Feature> = listOf(
     Feature("workspace", "Workspace", Icons.Default.FolderOpen) { back, nav -> app.hermesconduit.android.ui.workspace.WorkspaceScreen(back, nav) },
     Feature("kanban", "Kanban", Icons.Default.ViewKanban) { back, nav -> KanbanBoardScreen(back, nav) },
     *kanbanSubFeatures(),
+    Feature("settings.health", "Health", Icons.Default.Favorite, inDrawer = false, section = "On this device") { back, _ -> app.hermesconduit.android.ui.health.HealthSettingsScreen(back) },
+    Feature("settings.phone", "Calendar & phone", Icons.Default.CalendarMonth, inDrawer = false, section = "On this device") { back, _ -> app.hermesconduit.android.ui.phone.PhoneSettingsScreen(back) },
+    Feature("settings.location", "Location", Icons.Default.LocationOn, inDrawer = false, section = "On this device") { back, _ -> app.hermesconduit.android.ui.location.LocationSettingsScreen(back) },
 )
 
 fun feature(route: String): Feature? = features.firstOrNull { it.route == route.substringBefore('/') }
