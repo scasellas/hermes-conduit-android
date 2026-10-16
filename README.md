@@ -50,6 +50,10 @@ Start a conversation on desktop, pick it up on your phone. The session list is t
 - iPhone and iPad (iOS 17+)
 - Available in English, French, German, Indonesian, Italian, Japanese, Korean, Polish, Portuguese (Brazil), Russian, Simplified Chinese, Spanish, Traditional Chinese and Turkish
 
+## Android
+
+An early native Android port lives in [`android/`](android/README.md). It covers sign-in, chats, profiles, streaming chat, approvals, clarify questions and model switching.
+
 ## Requirements
 
 - iOS 17 or later

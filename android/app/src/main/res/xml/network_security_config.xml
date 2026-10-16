@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Self-hosted dashboards are usually reached over a LAN or a Tailscale
+     tailnet (already WireGuard-encrypted), so cleartext is permitted here and
+     ConnectionUrlPolicy decides which hosts may use it (loopback, RFC1918,
+     Tailscale), exactly like the iOS app. User-installed CAs are trusted so
+     dashboards behind a private CA work. -->
+<network-security-config xmlns:tools="http://schemas.android.com/tools">
+    <base-config cleartextTrafficPermitted="true" tools:ignore="InsecureBaseConfiguration">
+        <trust-anchors>
+            <certificates src="system" />
+            <certificates src="user" tools:ignore="AcceptsUserCertificates" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>
