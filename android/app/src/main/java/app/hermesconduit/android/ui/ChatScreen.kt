@@ -134,7 +134,12 @@ fun ChatScreen(viewModel: AppViewModel, showMenuButton: Boolean, onMenu: () -> U
     val slash by viewModel.slashCommands.collectAsStateWithLifecycle()
     val breakdown by viewModel.contextBreakdown.collectAsStateWithLifecycle()
     val delegates by viewModel.delegates.collectAsStateWithLifecycle()
-    ChatContent(chat, link, models, viewModel, showMenuButton, onMenu, slash, breakdown, delegates)
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val appearance = remember { app.hermesconduit.android.core.ProfileAppearance.of(context) }
+    val glowVersion by appearance.version.collectAsStateWithLifecycle()
+    val activeProfile by viewModel.profile.collectAsStateWithLifecycle()
+    val glow = remember(activeProfile, glowVersion) { appearance.glow(activeProfile) }
+    ChatContent(chat, link, models, viewModel, showMenuButton, onMenu, slash, breakdown, delegates, glow)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -149,6 +154,7 @@ fun ChatContent(
     slashCommands: List<app.hermesconduit.android.model.SlashCommand> = emptyList(),
     contextBreakdown: app.hermesconduit.android.model.ContextBreakdown? = null,
     delegates: List<app.hermesconduit.android.model.DelegateAgent>? = null,
+    glow: Int? = null,
 ) {
     var showModels by remember { mutableStateOf(false) }
     var showContext by remember { mutableStateOf(false) }
@@ -213,11 +219,6 @@ fun ChatContent(
             )
         },
     ) { padding ->
-        val context = androidx.compose.ui.platform.LocalContext.current
-        val appearance = remember { app.hermesconduit.android.core.ProfileAppearance.of(context) }
-        val glowVersion by appearance.version.collectAsStateWithLifecycle()
-        val activeProfile by context.hermes.profile.collectAsStateWithLifecycle()
-        val glow = remember(activeProfile, glowVersion) { appearance.glow(activeProfile) }
         Column(
             Modifier
                 .fillMaxSize()
