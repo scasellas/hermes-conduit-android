@@ -4,6 +4,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.RadioButton
@@ -49,8 +50,21 @@ fun SettingsScreen(onBack: () -> Unit, navigate: (String) -> Unit) {
     val lock by settings.bool(AppSettings.BIOMETRIC_LOCK, false).collectAsStateWithLifecycle()
     var picker by remember { mutableStateOf<String?>(null) }
 
+    val plugin = remember { app.hermesconduit.android.ui.plugin.PluginStatusRepository.of(context) }
+    val pluginStatus by plugin.status.collectAsStateWithLifecycle()
+    androidx.compose.runtime.LaunchedEffect(Unit) { runCatching { plugin.status(force = false) } }
     ScreenScaffold(t("Settings"), onBack) { padding ->
         SettingsColumn(padding) {
+            if (pluginStatus.updateAvailable || pluginStatus.restartPending) {
+                SettingsSection(null) {
+                    SettingsRow(
+                        if (pluginStatus.restartPending) t("Finish updating the Conduit plugin") else t("Update the Conduit plugin"),
+                        subtitle = t("Newer Conduit features need a newer notifier plugin on this Hermes."),
+                        icon = Icons.Default.SystemUpdate,
+                        onClick = { navigate("settings.plugin") },
+                    )
+                }
+            }
             val pages = features.filter { it.route.startsWith("settings.") }
             val order = listOf("Profile", "Voice", "Hermes", "App", "On this device", "Server", "About")
             pages.groupBy { it.section ?: "Server" }.toList().sortedBy { (section, _) -> order.indexOf(section).let { if (it < 0) order.size else it } }

@@ -38,6 +38,9 @@ import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Lightbulb
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.AlertDialog
@@ -112,6 +115,11 @@ interface ChatActions {
     fun setFast(enabled: Boolean) {}
     fun setYolo(enabled: Boolean) {}
     fun respondInputPrompt(value: String) {}
+    fun refreshChat() {}
+    fun renameCurrent(title: String) {}
+    fun archiveCurrent() {}
+    fun deleteCurrent() {}
+    fun togglePinCurrent() {}
 }
 
 @Composable
@@ -182,6 +190,7 @@ fun ChatContent(
                         }
                     }
                     if (chat.yolo) Text("YOLO", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(end = 6.dp))
+                    ConversationMenu(chat, actions)
                     chat.contextPercent?.takeIf { it > 0 }?.let { raw ->
                         val percent = if (raw <= 1.0) raw * 100 else raw
                         TextButton(onClick = { actions.loadContextBreakdown(); showContext = true }) {
@@ -468,6 +477,53 @@ private fun DecisionCard(content: @Composable () -> Unit) {
         modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
     ) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) { content() }
+    }
+}
+
+/** The conversation "…" menu: refresh, artifacts, workspace, rename/pin/archive/delete, gateway status. */
+@Composable
+private fun ConversationMenu(chat: ChatState, actions: ChatActions) {
+    var open by remember { mutableStateOf(false) }
+    var renaming by remember { mutableStateOf(false) }
+    var deleting by remember { mutableStateOf(false) }
+    val navigate = LocalNavigate.current
+    Box {
+        IconButton(onClick = { open = true }) { Icon(Icons.Default.MoreVert, t("More")) }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            val sid = chat.sessionId
+            DropdownMenuItem(text = { Text(t("Refresh")) }, enabled = sid != null, onClick = { open = false; actions.refreshChat() })
+            DropdownMenuItem(text = { Text(t("Artifacts")) }, enabled = sid != null, onClick = { open = false; navigate("artifacts/" + android.net.Uri.encode(sid)) })
+            DropdownMenuItem(text = { Text(t("Workspace")) }, onClick = {
+                open = false
+                navigate(chat.cwd?.let { "workspace/" + android.net.Uri.encode(it) } ?: "workspace")
+            })
+            if (sid != null) {
+                DropdownMenuItem(text = { Text(t("Rename")) }, onClick = { open = false; renaming = true })
+                DropdownMenuItem(text = { Text(t("Pin / Unpin")) }, onClick = { open = false; actions.togglePinCurrent() })
+                DropdownMenuItem(text = { Text(t("Archive")) }, onClick = { open = false; actions.archiveCurrent() })
+                DropdownMenuItem(text = { Text(t("Delete"), color = MaterialTheme.colorScheme.error) }, onClick = { open = false; deleting = true })
+            }
+            DropdownMenuItem(text = { Text(t("Gateway status")) }, onClick = { open = false; navigate("settings.gateway") })
+        }
+    }
+    if (renaming) {
+        var title by remember { mutableStateOf(chat.title) }
+        AlertDialog(
+            onDismissRequest = { renaming = false },
+            title = { Text(t("Rename chat")) },
+            text = { OutlinedTextField(title, { title = it }, singleLine = true) },
+            confirmButton = { TextButton(enabled = title.isNotBlank(), onClick = { renaming = false; actions.renameCurrent(title.trim()) }) { Text(t("Save")) } },
+            dismissButton = { TextButton(onClick = { renaming = false }) { Text(t("Cancel")) } },
+        )
+    }
+    if (deleting) {
+        AlertDialog(
+            onDismissRequest = { deleting = false },
+            title = { Text(t("Delete chat?")) },
+            text = { Text(chat.title) },
+            confirmButton = { TextButton(onClick = { deleting = false; actions.deleteCurrent() }) { Text(t("Delete"), color = MaterialTheme.colorScheme.error) } },
+            dismissButton = { TextButton(onClick = { deleting = false }) { Text(t("Cancel")) } },
+        )
     }
 }
 

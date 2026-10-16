@@ -603,6 +603,26 @@ class AppViewModel(application: Application) : AndroidViewModel(application), Ch
         }
     }
 
+    override fun refreshChat() {
+        val id = _chat.value.sessionId ?: return
+        _chat.update { it.copy(loading = true) }
+        viewModelScope.launch { resume(id, reloadHistory = true) }
+    }
+
+    private fun currentSummary(): SessionSummary? = _chat.value.sessionId?.let { id -> _sessions.value.sessions.firstOrNull { it.matches(id) } }
+
+    override fun renameCurrent(title: String) {
+        val id = _chat.value.sessionId ?: return
+        _chat.update { it.copy(title = title) }
+        renameSession(id, title)
+    }
+
+    override fun archiveCurrent() { _chat.value.sessionId?.let { archiveSession(it) } }
+
+    override fun deleteCurrent() { _chat.value.sessionId?.let { deleteSession(it) } }
+
+    override fun togglePinCurrent() { currentSummary()?.let { togglePinned(it) } }
+
     override fun consumePrefill() = _chat.update { it.copy(prefill = null) }
 
     override fun quote(message: ChatMessage) {
