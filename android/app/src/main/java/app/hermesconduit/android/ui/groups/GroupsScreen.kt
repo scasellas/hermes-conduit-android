@@ -73,7 +73,7 @@ import kotlinx.coroutines.launch
 /** The activity-wide [GroupsViewModel]: the room list and the open room share it. */
 @Composable
 fun groupsViewModel(): GroupsViewModel {
-    val activity = androidx.compose.ui.platform.LocalContext.current as androidx.activity.ComponentActivity
+    val activity = androidx.activity.compose.LocalActivity.current as androidx.activity.ComponentActivity
     return androidx.lifecycle.viewmodel.compose.viewModel(viewModelStoreOwner = activity)
 }
 
