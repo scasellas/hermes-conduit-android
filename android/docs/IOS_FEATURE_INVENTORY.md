@@ -549,8 +549,8 @@ Files: `Views/CapabilitiesView.swift` (206), `Views/Capabilities/CapabilityCompo
 - **Conversation identity and session references** (durable vs runtime ids, aliases): `ConversationIdentity.swift` (160), `ConversationIdentityIndex.swift` (247), `SessionReference.swift` (288), `HermesSessionReference.swift` (222), `SessionMutationIdentity.swift` (83), `SessionRenameOperation.swift` (127). About 1.1k lines. Needed for push routing, widgets and voice.
 - **Transcript performance instrumentation:** `TranscriptPerformanceInstrumentation.swift` (558). Optional.
 - **Session list profile fan-out and secondary-profile title recovery:** AppState L24068.
-- **`approval.pending` re-hydration on resume:** `HermesClient.pendingApprovals` L2417. Android only shows live approval events.
-- **Clarify history records:** `Models/ClarifyHistoryRecord.swift` (139). Shows answered clarifies in the transcript.
+- **`approval.pending` re-hydration on resume:** `HermesClient.pendingApprovals` L2417. Ported: `AppViewModel.resume` re-reads `approval.pending`.
+- **Clarify history records:** `Models/ClarifyHistoryRecord.swift` (139). Shows answered clarifies in the transcript. Ported: `model/ClarifyHistory.kt` + `ClarifyHistoryCard`.
 
 ---
 

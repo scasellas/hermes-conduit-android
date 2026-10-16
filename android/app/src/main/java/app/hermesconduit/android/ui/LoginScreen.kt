@@ -1,5 +1,6 @@
 package app.hermesconduit.android.ui
 
+import app.hermesconduit.android.core.t
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -102,7 +103,7 @@ fun LoginScreen(
                 OutlinedTextField(
                     value = url,
                     onValueChange = { url = it },
-                    label = { Text("Dashboard address") },
+                    label = { Text(t("Dashboard address")) },
                     placeholder = { Text("http://192.168.1.10:9119") },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Next, autoCorrectEnabled = false),
@@ -111,7 +112,7 @@ fun LoginScreen(
                 OutlinedTextField(
                     value = username,
                     onValueChange = { username = it },
-                    label = { Text("Username") },
+                    label = { Text(t("Username")) },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next, autoCorrectEnabled = false),
                     modifier = Modifier.fillMaxWidth(),
@@ -119,7 +120,7 @@ fun LoginScreen(
                 OutlinedTextField(
                     value = password,
                     onValueChange = { password = it },
-                    label = { Text("Password") },
+                    label = { Text(t("Password")) },
                     singleLine = true,
                     visualTransformation = PasswordVisualTransformation(),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Go),
@@ -127,21 +128,21 @@ fun LoginScreen(
                     modifier = Modifier.fillMaxWidth(),
                 )
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Cloudflare Access service token", Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                    Text(t("Cloudflare Access service token"), Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
                     Switch(checked = useServiceToken, onCheckedChange = { useServiceToken = it })
                 }
                 if (useServiceToken) {
                     OutlinedTextField(
                         value = cfId,
                         onValueChange = { cfId = it },
-                        label = { Text("Client ID") },
+                        label = { Text(t("Client ID")) },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                     )
                     OutlinedTextField(
                         value = cfSecret,
                         onValueChange = { cfSecret = it },
-                        label = { Text("Client secret") },
+                        label = { Text(t("Client secret")) },
                         singleLine = true,
                         visualTransformation = PasswordVisualTransformation(),
                         modifier = Modifier.fillMaxWidth(),
@@ -152,13 +153,13 @@ fun LoginScreen(
                 }
                 Button(onClick = submit, enabled = !state.busy && url.isNotBlank(), modifier = Modifier.fillMaxWidth().height(52.dp)) {
                     if (state.busy) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-                    else Text("Sign in")
+                    else Text(t("Sign in"))
                 }
                 OutlinedButton(
                     onClick = { onBrowserSignIn(url, if (useServiceToken) cfId else "", if (useServiceToken) cfSecret else "") },
                     enabled = !state.busy && url.isNotBlank(),
                     modifier = Modifier.fillMaxWidth().height(52.dp),
-                ) { Text("Sign in with browser (Google, OIDC…)") }
+                ) { Text(t("Sign in with browser (Google, OIDC…)")) }
                 if (onTest != null) {
                     TextButton(
                         onClick = { onTest(url, username, password, if (useServiceToken) cfId else "", if (useServiceToken) cfSecret else "") },
@@ -167,7 +168,7 @@ fun LoginScreen(
                     ) { Text(app.hermesconduit.android.core.t("Test Connection")) }
                 }
                 if (state.canCancel) {
-                    TextButton(onClick = onCancel, modifier = Modifier.fillMaxWidth()) { Text("Cancel") }
+                    TextButton(onClick = onCancel, modifier = Modifier.fillMaxWidth()) { Text(t("Cancel")) }
                 }
                 Text(
                     "Conduit connects to the native Hermes dashboard (default port 9119), not the WebUI. " +

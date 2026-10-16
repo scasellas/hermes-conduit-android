@@ -278,8 +278,8 @@ fun ChatContent(
             onDismissRequest = actions::cancelModelConfirm,
             title = { Text("Switch to ${confirm.model}?") },
             text = { Text(confirm.message) },
-            confirmButton = { TextButton(onClick = { actions.selectModel(confirm.provider, confirm.model, confirmed = true) }) { Text("Switch") } },
-            dismissButton = { TextButton(onClick = actions::cancelModelConfirm) { Text("Cancel") } },
+            confirmButton = { TextButton(onClick = { actions.selectModel(confirm.provider, confirm.model, confirmed = true) }) { Text(t("Switch")) } },
+            dismissButton = { TextButton(onClick = actions::cancelModelConfirm) { Text(t("Cancel")) } },
         )
     }
 }
@@ -313,7 +313,7 @@ private fun Transcript(chat: ChatState, modifier: Modifier, actions: ChatActions
     if (chat.messages.isEmpty()) {
         Box(modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
             if (chat.loading) CircularProgressIndicator()
-            else Text("What can Hermes do for you?", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            else Text(t("What can Hermes do for you?"), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         return
     }
@@ -327,7 +327,7 @@ private fun Transcript(chat: ChatState, modifier: Modifier, actions: ChatActions
         if (chat.hasEarlier) {
             item(key = "earlier") {
                 Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                    TextButton(onClick = actions::loadEarlier, enabled = !chat.loading) { Text("Load earlier messages") }
+                    TextButton(onClick = actions::loadEarlier, enabled = !chat.loading) { Text(t("Load earlier messages")) }
                 }
             }
         }
@@ -385,6 +385,38 @@ internal fun ToolCallCard(call: ToolCall) {
                 call.output?.takeIf { it.isNotBlank() }?.let { CodeBlock("Output", it) }
             }
         }
+    }
+}
+
+/** The read-only card for a clarify Hermes asked earlier in the chat. */
+@Composable
+internal fun ClarifyHistoryCard(record: app.hermesconduit.android.model.ClarifyHistoryRecord) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(MaterialTheme.colorScheme.surfaceContainer)
+            .padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        val expired = record.questions.any { it.answer == null }
+        Text(
+            t(if (expired) "EXPIRED" else "ANSWERED"),
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+            color = if (expired) MaterialTheme.colorScheme.onSurfaceVariant else androidx.compose.ui.graphics.Color(0xFF34C759),
+        )
+        val batch = record.questions.size > 1
+        if (batch) Text(app.hermesconduit.android.core.L10n.tr("Hermes asked %d questions before it can continue", record.questions.size), style = MaterialTheme.typography.titleSmall)
+        record.questions.forEach { question ->
+            Text(question.question, style = if (batch) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.titleSmall)
+            if (question.answer != null) {
+                Text(question.answer, style = MaterialTheme.typography.bodyMedium, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary)
+            } else if (question.choices.isNotEmpty()) {
+                Text(question.choices.joinToString(" · "), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        record.notice?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
     }
 }
 
@@ -464,7 +496,7 @@ private fun ApprovalCard(approval: ApprovalRequest, onChoice: (String) -> Unit) 
 private fun ClarifyCard(request: ClarifyRequest, onAnswer: (List<String>) -> Unit) {
     val answers = remember(request.requestId) { mutableStateListOf(*Array(request.questions.size) { "" }) }
     DecisionCard {
-        Text("Hermes has a question", style = MaterialTheme.typography.titleSmall)
+        Text(t("Hermes has a question"), style = MaterialTheme.typography.titleSmall)
         request.questions.forEachIndexed { index, question ->
             Text(question.question, style = MaterialTheme.typography.bodyMedium)
             if (question.choices.isNotEmpty()) {
@@ -490,7 +522,7 @@ private fun ClarifyCard(request: ClarifyRequest, onAnswer: (List<String>) -> Uni
                 )
             }
         }
-        Button(onClick = { onAnswer(answers.toList()) }, enabled = answers.all { it.isNotBlank() }) { Text("Answer") }
+        Button(onClick = { onAnswer(answers.toList()) }, enabled = answers.all { it.isNotBlank() }) { Text(t("Answer")) }
     }
 }
 

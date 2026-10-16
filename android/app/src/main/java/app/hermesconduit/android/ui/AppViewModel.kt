@@ -1061,8 +1061,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application), Ch
                     hermes.rpc("prompt.submit", params(false), timeout).obj
                 }
                 when (result?.get("status").str) {
-                    "queued" -> _chat.update { it.copy(notice = "Queued — Hermes will answer after the current turn.") }
-                    "steered" -> _chat.update { it.copy(notice = "Sent as guidance for the running turn.") }
+                    "queued" -> _chat.update { it.copy(notice = L10n.tr("Queued — Hermes will answer after the current turn.")) }
+                    "steered" -> _chat.update { it.copy(notice = L10n.tr("Sent as guidance for the running turn.")) }
                 }
                 return true
             } catch (e: app.hermesconduit.android.net.RpcException) {
@@ -1250,7 +1250,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application), Ch
     override fun selectModel(provider: String, model: String, confirmed: Boolean) {
         val runtimeId = _chat.value.runtimeId
         if (runtimeId == null) {
-            _chat.update { it.copy(notice = "Send a first message, then switch the model for this chat.") }
+            _chat.update { it.copy(notice = L10n.tr("Send a first message, then switch the model for this chat.")) }
             return
         }
         _chat.update { it.copy(modelConfirm = null) }

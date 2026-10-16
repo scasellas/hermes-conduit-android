@@ -132,7 +132,11 @@ fun MessageRow(message: ChatMessage, actions: ChatActions, canAct: Boolean = tru
         MessageRole.SYSTEM -> SystemRow(message)
         else -> Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             if (showReasoning) message.reasoning?.takeIf { it.isNotBlank() }?.let { Reasoning(it, live = message.streaming && message.content.isEmpty()) }
-            if (showTools) message.toolCalls.forEach { ToolCallCard(it) }
+            message.toolCalls.forEach { call ->
+                // An answered clarify reads back as its question card, not the bare tool call.
+                val clarify = remember(call) { app.hermesconduit.android.model.ClarifyHistoryRecord.from(call, app.hermesconduit.android.core.L10n::tr) }
+                if (clarify != null) ClarifyHistoryCard(clarify) else if (showTools) ToolCallCard(call)
+            }
             if (message.content.isNotBlank()) {
                 RichMarkdown(message.content, fontScale = scale)
             } else if (message.streaming && message.toolCalls.none { it.running } && message.reasoning.isNullOrBlank()) {

@@ -160,7 +160,7 @@ fun SessionDrawerContent(
     Column(Modifier.fillMaxHeight()) {
         Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 8.dp, top = 16.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
-                Text("Chats", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
+                Text(t("Chats"), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
                 Box {
                     Text(
                         (dashboards.firstOrNull { it.first == activeDashboardId }?.second ?: dashboardUrl.orEmpty()) + "  ▾",
@@ -182,7 +182,7 @@ fun SessionDrawerContent(
                             )
                         }
                         HorizontalDivider()
-                        DropdownMenuItem(text = { Text("Add dashboard…") }, onClick = { dashboardMenu = false; actions.addDashboard() })
+                        DropdownMenuItem(text = { Text(t("Add dashboard…")) }, onClick = { dashboardMenu = false; actions.addDashboard() })
                     }
                 }
             }
@@ -305,17 +305,17 @@ fun SessionDrawerContent(
         TextButton(onClick = { confirmSignOut = true }, modifier = Modifier.padding(8.dp)) {
             Icon(Icons.AutoMirrored.Filled.Logout, null, Modifier.size(18.dp))
             Spacer(Modifier.width(8.dp))
-            Text("Sign out")
+            Text(t("Sign out"))
         }
     }
 
     if (confirmSignOut) {
         AlertDialog(
             onDismissRequest = { confirmSignOut = false },
-            title = { Text("Sign out?") },
-            text = { Text("Conduit forgets this dashboard's address and credentials on this device.") },
-            confirmButton = { TextButton(onClick = { confirmSignOut = false; actions.signOut() }) { Text("Sign out") } },
-            dismissButton = { TextButton(onClick = { confirmSignOut = false }) { Text("Cancel") } },
+            title = { Text(t("Sign out?")) },
+            text = { Text(t("Conduit forgets this dashboard's address and credentials on this device.")) },
+            confirmButton = { TextButton(onClick = { confirmSignOut = false; actions.signOut() }) { Text(t("Sign out")) } },
+            dismissButton = { TextButton(onClick = { confirmSignOut = false }) { Text(t("Cancel")) } },
         )
     }
 }
@@ -391,11 +391,11 @@ private fun SessionRow(
         }
         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
             DropdownMenuItem(text = { Text(if (session.unread) t("Mark as read") else t("Mark as unread")) }, onClick = { menu = false; onToggleUnread() })
-            DropdownMenuItem(text = { Text("Rename") }, onClick = { menu = false; renaming = true })
+            DropdownMenuItem(text = { Text(t("Rename")) }, onClick = { menu = false; renaming = true })
             DropdownMenuItem(text = { Text(if (session.pinned) "Unpin" else "Pin") }, onClick = { menu = false; onPin() })
             DropdownMenuItem(text = { Text(t("Move to Project…")) }, onClick = { menu = false; moving = true })
-            DropdownMenuItem(text = { Text("Archive") }, onClick = { menu = false; onArchive() })
-            DropdownMenuItem(text = { Text("Delete", color = MaterialTheme.colorScheme.error) }, onClick = { menu = false; confirmDelete = true })
+            DropdownMenuItem(text = { Text(t("Archive")) }, onClick = { menu = false; onArchive() })
+            DropdownMenuItem(text = { Text(t("Delete"), color = MaterialTheme.colorScheme.error) }, onClick = { menu = false; confirmDelete = true })
         }
     }
 
@@ -406,21 +406,21 @@ private fun SessionRow(
         var title by remember { mutableStateOf(session.title) }
         AlertDialog(
             onDismissRequest = { renaming = false },
-            title = { Text("Rename chat") },
+            title = { Text(t("Rename chat")) },
             text = { OutlinedTextField(value = title, onValueChange = { title = it }, singleLine = true) },
             confirmButton = {
-                TextButton(enabled = title.isNotBlank(), onClick = { renaming = false; onRename(title.trim()) }) { Text("Save") }
+                TextButton(enabled = title.isNotBlank(), onClick = { renaming = false; onRename(title.trim()) }) { Text(t("Save")) }
             },
-            dismissButton = { TextButton(onClick = { renaming = false }) { Text("Cancel") } },
+            dismissButton = { TextButton(onClick = { renaming = false }) { Text(t("Cancel")) } },
         )
     }
     if (confirmDelete) {
         AlertDialog(
             onDismissRequest = { confirmDelete = false },
-            title = { Text("Delete chat?") },
+            title = { Text(t("Delete chat?")) },
             text = { Text("“${session.title}” is deleted from the dashboard for every device.") },
-            confirmButton = { TextButton(onClick = { confirmDelete = false; onDelete() }) { Text("Delete", color = MaterialTheme.colorScheme.error) } },
-            dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Cancel") } },
+            confirmButton = { TextButton(onClick = { confirmDelete = false; onDelete() }) { Text(t("Delete"), color = MaterialTheme.colorScheme.error) } },
+            dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text(t("Cancel")) } },
         )
     }
 }
