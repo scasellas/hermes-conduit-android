@@ -57,5 +57,13 @@ class AppSettings(context: Context) {
         const val CHAT_FONT_SCALE = "chat_font_scale"
         const val NOTIFICATIONS_ENABLED = "notifications_enabled"
         const val BACKGROUND_CONNECTION = "background_connection"
+        const val CHAT_RESUME = "chat_resume" // continue | latest
+        const val CHAT_TEXT_SIZE = "chat_text_size" // 0…4
+        const val ATTACHMENT_MAX_MB = "attachment_max_mb"
+        const val AUTO_TAKEOVER = "auto_takeover"
+        const val LAST_SESSION = "last_session"
+        const val APP_ICON = "app_icon" // dark | light
+
+        fun displayNameKey(dashboardId: String?, profile: String) = "display_name.${dashboardId ?: "-"}.$profile"
     }
 }

@@ -51,11 +51,14 @@ fun SettingsScreen(onBack: () -> Unit, navigate: (String) -> Unit) {
     ScreenScaffold(t("Settings"), onBack) { padding ->
         SettingsColumn(padding) {
             val pages = features.filter { it.route.startsWith("settings.") }
-            if (pages.isNotEmpty()) {
-                SettingsSection(null) {
-                    pages.forEach { page -> SettingsRow(t(page.title), icon = page.icon, onClick = { navigate(page.route) }) }
+            val order = listOf("Profile", "Voice", "Hermes", "App", "On this device", "Server", "About")
+            pages.groupBy { it.section ?: "Server" }.toList().sortedBy { (section, _) -> order.indexOf(section).let { if (it < 0) order.size else it } }
+                .forEach { (section, list) ->
+                    if (section == "About") return@forEach
+                    SettingsSection(t(section)) {
+                        list.forEach { page -> SettingsRow(t(page.title), icon = page.icon, onClick = { navigate(page.route) }) }
+                    }
                 }
-            }
             SettingsSection(t("Appearance")) {
                 SettingsRow(
                     t("Language"),
@@ -69,6 +72,9 @@ fun SettingsScreen(onBack: () -> Unit, navigate: (String) -> Unit) {
                     value = when (theme) { "light" -> t("Light"); "dark" -> t("Dark"); else -> t("System") },
                     onClick = { picker = "theme" },
                 )
+            }
+            pages.filter { it.section == "About" }.takeIf { it.isNotEmpty() }?.let { about ->
+                SettingsSection(t("About")) { about.forEach { page -> SettingsRow(t(page.title), icon = page.icon, onClick = { navigate(page.route) }) } }
             }
             SettingsSection(t("Security"), footer = t("Ask for your fingerprint, face or screen lock when Conduit opens.")) {
                 val available = (context as? FragmentActivity)?.let(AppLock::isAvailable) == true
