@@ -1,5 +1,6 @@
 package app.hermesconduit.android.model
 
+@kotlinx.serialization.Serializable
 data class SessionSummary(
     /** Id used for REST and `session.resume` (stored id when known). */
     val id: String,
@@ -39,8 +40,10 @@ data class ProjectLane(val id: String, val title: String, val sessions: List<Ses
 
 data class SearchMatch(val sessionId: String, val title: String, val snippet: String, val lastActiveMs: Long?)
 
+@kotlinx.serialization.Serializable
 enum class MessageRole { USER, ASSISTANT, SYSTEM, TOOL, REASONING }
 
+@kotlinx.serialization.Serializable
 data class ToolCall(
     val id: String?,
     val name: String,
@@ -49,6 +52,7 @@ data class ToolCall(
     val running: Boolean = false,
 )
 
+@kotlinx.serialization.Serializable
 data class ChatMessage(
     val id: String,
     val role: MessageRole,
@@ -66,6 +70,7 @@ data class ChatMessage(
     val kind: String? = null,
 )
 
+@kotlinx.serialization.Serializable
 data class MessageReaction(val emoji: String, val author: String, val at: Double? = null) {
     val isFromUser: Boolean get() = author == USER
 

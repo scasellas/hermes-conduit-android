@@ -59,6 +59,8 @@ data class SessionsState(
     val liveStatus: Map<String, String> = emptyMap(),
     val needsApproval: Set<String> = emptySet(),
     val scheduled: List<SessionSummary>? = null,
+    /** Showing the on-disk copy because the dashboard couldn't be reached. */
+    val offline: Boolean = false,
 ) {
     fun statusOf(session: SessionSummary): String? =
         (session.alternateIds + session.id).firstNotNullOfOrNull { liveStatus[it] }
@@ -110,6 +112,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application), Ch
 
     private val _chat = MutableStateFlow(ChatState())
     val chat: StateFlow<ChatState> = _chat
+
+    private val offline = app.hermesconduit.android.data.OfflineCache(application)
 
     private val _models = MutableStateFlow<ModelOptions?>(null)
     val models: StateFlow<ModelOptions?> = _models
@@ -290,6 +294,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application), Ch
 
     override fun reconnectNow() = hermes.reconnectNow()
 
+    override fun repairConnection() {
+        viewModelScope.launch {
+            hermes.repair().onFailure { e -> _chat.update { it.copy(error = L10n.tr("Couldn't repair the connection: %s", e.message ?: "")) } }
+        }
+    }
+
     private val responseHaptics = app.hermesconduit.android.core.Haptics.ResponseTracker()
 
     private fun onEvent(event: StreamEvent) {
@@ -312,6 +322,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application), Ch
         if ((event is StreamEvent.ToolStart && event.name.equals("conduit_present", true)) ||
             (event is StreamEvent.ToolComplete && event.name.equals("conduit_present", true))
         ) app.hermesconduit.android.ui.present.PresentedScreens.sync(getApplication())
+        if (chat.running && !next.running) next.sessionId?.let { offline.saveTranscript(hermes.connection.value?.id, hermes.profile.value, it, next.title, next.messages) }
         if (chat.running && !next.running) viewModelScope.launch {
             refreshSessions()
             refreshLiveStatus()
@@ -410,11 +421,20 @@ class AppViewModel(application: Application) : AndroidViewModel(application), Ch
             }
             val sorted = all.distinctBy { it.id }
                 .sortedWith(compareByDescending<SessionSummary> { it.pinned }.thenByDescending { it.lastActiveMs ?: 0 })
-            _sessions.value = SessionsState(sorted)
+            _sessions.update { it.copy(sessions = sorted, loading = false, error = null, offline = false) }
+            offline.saveSessions(hermes.connection.value?.id, profile, sorted)
         } catch (e: AuthExpiredException) {
             _sessions.update { it.copy(loading = false) }
         } catch (e: Exception) {
-            _sessions.update { it.copy(loading = false, error = e.message ?: "Couldn't load chats.") }
+            val cached = if (_sessions.value.sessions.isEmpty()) offline.sessions(hermes.connection.value?.id, hermes.profile.value) else null
+            _sessions.update {
+                it.copy(
+                    loading = false,
+                    error = e.message ?: "Couldn't load chats.",
+                    sessions = cached ?: it.sessions,
+                    offline = cached != null || it.offline,
+                )
+            }
         }
     }
 
@@ -490,10 +510,16 @@ class AppViewModel(application: Application) : AndroidViewModel(application), Ch
                 val page = hermes.rest { it.messages(sessionId, hermes.profile.value) }
                 _chat.update {
                     if (it.sessionId != sessionId) it
-                    else it.copy(messages = page.messages, hasEarlier = page.hasMore, loadedOffset = HISTORY_PAGE)
+                    else it.copy(messages = page.messages, hasEarlier = page.hasMore, loadedOffset = HISTORY_PAGE, offlineSavedAtMs = null)
                 }
+                offline.saveTranscript(hermes.connection.value?.id, hermes.profile.value, sessionId, _chat.value.title, page.messages)
             } catch (e: Exception) {
-                _chat.update { if (it.sessionId != sessionId) it else it.copy(error = e.message ?: "Couldn't load this chat.") }
+                val cached = offline.transcript(hermes.connection.value?.id, hermes.profile.value, sessionId)
+                _chat.update {
+                    if (it.sessionId != sessionId) it
+                    else if (cached != null) it.copy(messages = cached.first, offlineSavedAtMs = cached.second, loading = false)
+                    else it.copy(error = e.message ?: "Couldn't load this chat.")
+                }
             }
         }
         try {

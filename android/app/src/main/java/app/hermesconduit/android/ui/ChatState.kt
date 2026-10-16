@@ -39,6 +39,8 @@ data class ChatState(
     val prefill: String? = null,
     val compacting: Boolean = false,
     val takeover: TakeoverState? = null,
+    /** Set while the transcript is the offline copy saved at this time. */
+    val offlineSavedAtMs: Long? = null,
     val notice: String? = null,
     val error: String? = null,
 )

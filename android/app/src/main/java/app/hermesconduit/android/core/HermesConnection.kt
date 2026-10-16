@@ -79,6 +79,26 @@ class HermesConnection(context: Context) {
     /** Emits when the session can't be recovered (message for the login screen). */
     val signedOut: SharedFlow<String?> = _signedOut
 
+    data class TimelineEntry(val atMs: Long, val text: String)
+
+    private val _timeline = MutableStateFlow<List<TimelineEntry>>(emptyList())
+    /** Copyable log of connection events (the iOS ConnectionTimeline). */
+    val timeline: StateFlow<List<TimelineEntry>> = _timeline
+
+    fun log(text: String) {
+        _timeline.value = (_timeline.value + TimelineEntry(System.currentTimeMillis(), text)).takeLast(200)
+    }
+
+    /** Signs in again from scratch (fresh cookies or refreshed tokens), then reconnects. */
+    suspend fun repair(): Result<Unit> = runCatching {
+        val api = api ?: error("Not signed in.")
+        log("Repair: signing in again")
+        if (_connection.value?.authMode != "oauth") api.cookieJar.clear()
+        relogin(api)
+        log("Repair: signed in")
+        reconnectNow()
+    }.onFailure { log("Repair failed: ${it.message}") }
+
     /** Gateway capabilities reported on connect (e.g. `declines_not_shown`). */
     val capabilities: JsonObject? get() = gateway?.capabilities
 
@@ -237,6 +257,7 @@ class HermesConnection(context: Context) {
         val api = api ?: return
         disconnectGateway()
         _link.value = LinkState.CONNECTING
+        log("Connecting to ${api.baseUrl} (profile ${_profile.value})")
         val saved = _connection.value
         val client = GatewayClient(
             http = api.http.newBuilder().pingInterval(0, TimeUnit.SECONDS).build(),
@@ -254,8 +275,9 @@ class HermesConnection(context: Context) {
                 client.state.collect { state ->
                     if (gateway !== client) return@collect
                     when (state) {
-                        GatewayClient.State.CONNECTED -> _link.value = LinkState.CONNECTED
+                        GatewayClient.State.CONNECTED -> { _link.value = LinkState.CONNECTED; log("Gateway connected") }
                         GatewayClient.State.CLOSED -> {
+                            log("Gateway connection closed")
                             _link.value = LinkState.OFFLINE
                             scheduleReconnect()
                         }
@@ -266,9 +288,11 @@ class HermesConnection(context: Context) {
         )
         try {
             val ticket = rest { it.webSocketTicket() }
+            log("Ticket minted")
             client.connect(api.baseUrl, ticket)
             _connected.emit(Unit)
         } catch (e: Exception) {
+            log("Connect failed: ${e.message ?: e.javaClass.simpleName}")
             if (gateway === client) {
                 _link.value = LinkState.OFFLINE
                 if (e !is AuthExpiredException) scheduleReconnect()

@@ -117,6 +117,7 @@ interface ChatActions {
     fun respondInputPrompt(value: String) {}
     fun refreshChat() {}
     fun takeOver() {}
+    fun repairConnection() {}
     fun dismissTakeover() {}
     fun renameCurrent(title: String) {}
     fun archiveCurrent() {}
@@ -217,6 +218,20 @@ fun ChatContent(
                 .padding(padding)
                 .imePadding(),
         ) {
+            chat.offlineSavedAtMs?.let { saved ->
+                Row(
+                    Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceContainerHigh).padding(horizontal = 16.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        t("Offline copy from %s", java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.SHORT, java.text.DateFormat.SHORT).format(java.util.Date(saved))),
+                        style = MaterialTheme.typography.labelMedium,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(onClick = actions::refreshChat) { Text(t("Retry")) }
+                }
+            }
+            if (link == LinkState.OFFLINE) ConnectionProblemBanner(actions)
             Transcript(chat, Modifier.weight(1f), actions)
             Banner(chat, onDismiss = actions::dismissNotice)
             chat.approval?.let { ApprovalCard(it, onChoice = actions::respondApproval) }
@@ -527,6 +542,20 @@ private fun ConversationMenu(chat: ChatState, actions: ChatActions) {
             confirmButton = { TextButton(onClick = { deleting = false; actions.deleteCurrent() }) { Text(t("Delete"), color = MaterialTheme.colorScheme.error) } },
             dismissButton = { TextButton(onClick = { deleting = false }) { Text(t("Cancel")) } },
         )
+    }
+}
+
+@Composable
+private fun ConnectionProblemBanner(actions: ChatActions) {
+    val navigate = LocalNavigate.current
+    Row(
+        Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.errorContainer).padding(horizontal = 16.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(t("Can't reach Hermes"), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onErrorContainer, modifier = Modifier.weight(1f))
+        TextButton(onClick = actions::reconnectNow) { Text(t("Retry")) }
+        TextButton(onClick = actions::repairConnection) { Text(t("Repair Connection")) }
+        TextButton(onClick = { navigate("settings.connectionlog") }) { Text(t("Details")) }
     }
 }
 
