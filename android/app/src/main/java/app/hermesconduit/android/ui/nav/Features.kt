@@ -50,6 +50,7 @@ val features: List<Feature> = listOf(
     Feature("settings.model", "Model", Icons.Default.Memory, inDrawer = false, section = "Hermes") { back, _ -> app.hermesconduit.android.ui.settings.ModelDefaultsPage(back) },
     Feature("settings.chat", "Chat", Icons.Default.Chat, inDrawer = false, section = "Hermes") { back, _ -> app.hermesconduit.android.ui.settings.ChatSettingsPage(back) },
     Feature("settings.memory", "Memory & delegation", Icons.Default.Psychology, inDrawer = false, section = "Hermes") { back, _ -> app.hermesconduit.android.ui.settings.MemorySettingsPage(back) },
+    Feature("settings.profiles", "Profiles", Icons.Default.Person, inDrawer = false, section = "App") { back, _ -> app.hermesconduit.android.ui.settings.ProfilesPage(back) },
     Feature("settings.notifications", "Notifications", Icons.Default.Notifications, inDrawer = false, section = "App") { back, _ -> app.hermesconduit.android.notify.NotificationSettingsPage(back) },
     Feature("settings.connectionlog", "Connection log", Icons.Default.Info, inDrawer = false, section = "Server") { back, _ -> app.hermesconduit.android.ui.settings.ConnectionLogPage(back) },
     Feature("settings.screenquestion", "Ask Hermes About Screen", Icons.Default.Info, inDrawer = false, section = "App") { back, _ -> app.hermesconduit.android.assist.ScreenQuestionPage(back) },

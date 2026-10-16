@@ -196,8 +196,11 @@ fun SessionDrawerContent(
                 Text("Profile: $profile")
             }
             DropdownMenu(expanded = profileMenu, onDismissRequest = { profileMenu = false }) {
-                profiles.forEach { name ->
+                val appearance = app.hermesconduit.android.core.ProfileAppearance.of(androidx.compose.ui.platform.LocalContext.current)
+                val appearanceVersion by appearance.version.collectAsStateWithLifecycle()
+                appearance.sorted(profiles).forEach { name ->
                     DropdownMenuItem(
+                        leadingIcon = { app.hermesconduit.android.ui.settings.Avatar(appearance, name, appearanceVersion, size = 28) },
                         text = { Text(name, fontWeight = if (name == profile) FontWeight.Bold else FontWeight.Normal) },
                         onClick = {
                             profileMenu = false

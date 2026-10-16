@@ -2,6 +2,7 @@ package app.hermesconduit.android.ui
 
 import app.hermesconduit.android.core.LinkState
 import app.hermesconduit.android.core.t
+import app.hermesconduit.android.hermes
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -212,9 +213,22 @@ fun ChatContent(
             )
         },
     ) { padding ->
+        val context = androidx.compose.ui.platform.LocalContext.current
+        val appearance = remember { app.hermesconduit.android.core.ProfileAppearance.of(context) }
+        val glowVersion by appearance.version.collectAsStateWithLifecycle()
+        val activeProfile by context.hermes.profile.collectAsStateWithLifecycle()
+        val glow = remember(activeProfile, glowVersion) { appearance.glow(activeProfile) }
         Column(
             Modifier
                 .fillMaxSize()
+                .then(
+                    // V2 backdrop: the active profile's glow behind the conversation.
+                    if (glow != null) Modifier.background(
+                        androidx.compose.ui.graphics.Brush.verticalGradient(
+                            listOf(androidx.compose.ui.graphics.Color(glow).copy(alpha = 0.16f), androidx.compose.ui.graphics.Color.Transparent),
+                        ),
+                    ) else Modifier,
+                )
                 .padding(padding)
                 .imePadding(),
         ) {
