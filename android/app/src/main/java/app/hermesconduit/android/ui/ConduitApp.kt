@@ -59,8 +59,26 @@ private fun MainNavigation(viewModel: AppViewModel) {
     }
     val context = LocalContext.current
     androidx.compose.runtime.LaunchedEffect(Unit) { app.hermesconduit.android.ui.present.PresentedScreens.sync(context) }
+    val route by viewModel.openRoute.collectAsStateWithLifecycle()
+    androidx.compose.runtime.LaunchedEffect(route) {
+        route?.let { r ->
+            viewModel.consumeOpenRoute()
+            if (r == "home") nav.popBackStack("home", inclusive = false)
+            else if (app.hermesconduit.android.ui.nav.feature(r) != null) nav.navigate(r)
+        }
+    }
+    // conduit:// links in messages open inside the app; everything else in the browser.
+    val defaultUri = androidx.compose.ui.platform.LocalUriHandler.current
+    val uriHandler = androidx.compose.runtime.remember(defaultUri) {
+        object : androidx.compose.ui.platform.UriHandler {
+            override fun openUri(uri: String) {
+                val link = app.hermesconduit.android.core.AppLink.parse(Uri.parse(uri))
+                if (link != null) viewModel.handleLink(link) else runCatching { defaultUri.openUri(uri) }
+            }
+        }
+    }
     app.hermesconduit.android.ui.present.PresentedConfirmHost()
-    CompositionLocalProvider(LocalNavigate provides navigate) {
+    CompositionLocalProvider(LocalNavigate provides navigate, androidx.compose.ui.platform.LocalUriHandler provides uriHandler) {
         NavHost(nav, startDestination = "home") {
             composable("home") { MainScreen(viewModel, openFeature = navigate) }
             features.forEach { feature ->

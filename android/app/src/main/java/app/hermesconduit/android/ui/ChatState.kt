@@ -37,6 +37,8 @@ data class ChatState(
     val activeAgents: Int = 0,
     /** Text to place in the composer (quote, slash prefill); consumed by the composer. */
     val prefill: String? = null,
+    /** Files shared from another app, read into the composer. */
+    val prefillAttachments: List<android.net.Uri> = emptyList(),
     val compacting: Boolean = false,
     val takeover: TakeoverState? = null,
     /** Set while the transcript is the offline copy saved at this time. */

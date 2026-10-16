@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android Auto reads Conduit's messaging notifications aloud and takes voice replies. -->
+<automotiveApp>
+    <uses name="notification" />
+</automotiveApp>

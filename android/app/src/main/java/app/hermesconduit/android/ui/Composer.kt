@@ -72,16 +72,16 @@ fun Composer(chat: ChatState, enabled: Boolean, actions: ChatActions, slashComma
     val context = LocalContext.current
     val drafts = remember { ComposerDrafts(context) }
     var text by rememberSaveable(chat.sessionId) { mutableStateOf(drafts.load(chat.sessionId)) }
-    androidx.compose.runtime.LaunchedEffect(chat.prefill) {
-        chat.prefill?.let {
-            text = if (text.isBlank()) it else "$text\n$it"
-            actions.consumePrefill()
-        }
+    val attachments = remember { mutableStateListOf<Attachment>() }
+    androidx.compose.runtime.LaunchedEffect(chat.prefill, chat.prefillAttachments) {
+        if (chat.prefill == null && chat.prefillAttachments.isEmpty()) return@LaunchedEffect
+        chat.prefill?.let { text = if (text.isBlank()) it else "$text\n$it" }
+        chat.prefillAttachments.forEach { uri -> runCatching { attachments += Attachment.read(context, uri) } }
+        actions.consumePrefill()
     }
     androidx.compose.runtime.LaunchedEffect(text, chat.sessionId) { drafts.save(chat.sessionId, text) }
     val sendOnEnter by context.appSettings.bool(app.hermesconduit.android.data.AppSettings.SEND_ON_ENTER, false).collectAsStateWithLifecycle()
     var fullEditor by remember { mutableStateOf(false) }
-    val attachments = remember { mutableStateListOf<Attachment>() }
     var menu by remember { mutableStateOf(false) }
     var attachError by remember { mutableStateOf<String?>(null) }
 

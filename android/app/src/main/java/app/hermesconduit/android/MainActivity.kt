@@ -26,9 +26,36 @@ class MainActivity : FragmentActivity() {
         handleIntent(intent)
     }
 
+    /** Shortcuts, the tile and notifications are ours; anything else is an external link. */
+    private fun isInternal(intent: android.content.Intent) =
+        intent.component?.packageName == packageName && (intent.data?.host == "new" || intent.data?.host == "voice" || referrer?.host == packageName)
+
     /** Notification taps (and later widgets/shortcuts) carry the chat to open. */
     private fun handleIntent(intent: android.content.Intent?) {
-        val session = intent?.getStringExtra(app.hermesconduit.android.notify.ConduitNotifications.EXTRA_SESSION) ?: return
+        intent ?: return
+        when (intent.action) {
+            android.content.Intent.ACTION_VIEW -> {
+                app.hermesconduit.android.core.AppLink.parse(intent.data, external = !isInternal(intent))?.let(viewModel::handleLink)
+                intent.data = null
+                return
+            }
+            android.content.Intent.ACTION_SEND, android.content.Intent.ACTION_SEND_MULTIPLE -> {
+                val text = listOfNotNull(
+                    intent.getStringExtra(android.content.Intent.EXTRA_SUBJECT),
+                    intent.getCharSequenceExtra(android.content.Intent.EXTRA_TEXT)?.toString(),
+                ).joinToString("\n").trim()
+                @Suppress("DEPRECATION")
+                val uris = if (intent.action == android.content.Intent.ACTION_SEND) {
+                    listOfNotNull(intent.getParcelableExtra<android.net.Uri>(android.content.Intent.EXTRA_STREAM))
+                } else {
+                    intent.getParcelableArrayListExtra<android.net.Uri>(android.content.Intent.EXTRA_STREAM).orEmpty()
+                }
+                viewModel.receiveShare(text, uris)
+                intent.action = null
+                return
+            }
+        }
+        val session = intent.getStringExtra(app.hermesconduit.android.notify.ConduitNotifications.EXTRA_SESSION) ?: return
         viewModel.openFromNotification(
             session,
             intent.getStringExtra(app.hermesconduit.android.notify.ConduitNotifications.EXTRA_TITLE),

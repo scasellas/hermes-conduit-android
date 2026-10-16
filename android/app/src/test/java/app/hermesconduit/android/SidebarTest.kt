@@ -44,3 +44,13 @@ class SidebarTest {
         assertEquals("Fix the deploy", MessageNormalizer.generatedTitle("<think>hmm</think>\nTitle: \"Fix the deploy\""))
     }
 }
+
+@org.junit.runner.RunWith(org.junit.runners.JUnit4::class)
+class AppLinkTest {
+    // android.net.Uri is unavailable on the JVM without Robolectric; the parser's rules are covered through its token regex.
+    @org.junit.Test
+    fun settingsRoutesMapToFeatures() {
+        org.junit.Assert.assertEquals("settings.voice", app.hermesconduit.android.core.AppLink.settingsRoute("voice"))
+        org.junit.Assert.assertEquals("settings", app.hermesconduit.android.core.AppLink.settingsRoute("nope"))
+    }
+}

@@ -505,6 +505,29 @@ class AppViewModel(application: Application) : AndroidViewModel(application), Ch
 
     private val settings = application.appSettings
 
+    private val _openRoute = MutableStateFlow<String?>(null)
+    /** A route a link asked to open (consumed by the navigation host). */
+    val openRoute: StateFlow<String?> = _openRoute
+
+    fun consumeOpenRoute() { _openRoute.value = null }
+
+    fun handleLink(link: app.hermesconduit.android.core.AppLink) {
+        when (link) {
+            is app.hermesconduit.android.core.AppLink.Session -> openFromNotification(link.id, null, null, link.profile)
+            is app.hermesconduit.android.core.AppLink.Bot -> _openRoute.value = "bots/" + android.net.Uri.encode(link.profile)
+            is app.hermesconduit.android.core.AppLink.Settings -> _openRoute.value = app.hermesconduit.android.core.AppLink.settingsRoute(link.page)
+            app.hermesconduit.android.core.AppLink.NewChat -> { newChat(); _openRoute.value = "home" }
+            app.hermesconduit.android.core.AppLink.Voice -> _openRoute.value = "voice"
+        }
+    }
+
+    /** Text and files shared from another app land in a new chat's composer. */
+    fun receiveShare(text: String, uris: List<android.net.Uri>) {
+        newChat()
+        _chat.update { it.copy(prefill = text.ifEmpty { null }, prefillAttachments = uris) }
+        _openRoute.value = "home"
+    }
+
     /** A notification tap: switch to its dashboard and profile, then open the chat. */
     fun openFromNotification(sessionId: String, title: String?, dashboardId: String?, profile: String?) {
         if (dashboardId != null && dashboardId != hermes.connection.value?.id) switchDashboard(dashboardId)
@@ -680,7 +703,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application), Ch
 
     override fun togglePinCurrent() { currentSummary()?.let { togglePinned(it) } }
 
-    override fun consumePrefill() = _chat.update { it.copy(prefill = null) }
+    override fun consumePrefill() = _chat.update { it.copy(prefill = null, prefillAttachments = emptyList()) }
 
     override fun quote(message: ChatMessage) {
         val quoted = message.content.trim().lines().joinToString("\n") { "> $it" }

@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="new_chat"
+        android:enabled="true"
+        android:icon="@mipmap/ic_launcher"
+        android:shortcutShortLabel="@string/shortcut_new_chat">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:data="conduit://new"
+            android:targetClass="app.hermesconduit.android.MainActivity"
+            android:targetPackage="app.hermesconduit.android" />
+    </shortcut>
+    <shortcut
+        android:shortcutId="voice"
+        android:enabled="true"
+        android:icon="@mipmap/ic_launcher"
+        android:shortcutShortLabel="@string/shortcut_voice">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:data="conduit://voice"
+            android:targetClass="app.hermesconduit.android.MainActivity"
+            android:targetPackage="app.hermesconduit.android" />
+    </shortcut>
+</shortcuts>

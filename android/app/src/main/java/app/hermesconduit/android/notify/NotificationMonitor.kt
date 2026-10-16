@@ -183,10 +183,43 @@ class NotificationMonitor(private val context: Context) {
 
     private fun completion(sid: String, title: String, text: String?) {
         val channel = if (pref(NotificationPrefs.COMPLETION_SOUND)) ConduitNotifications.CHANNEL_COMPLETION else ConduitNotifications.CHANNEL_COMPLETION_QUIET
+        val id = ConduitNotifications.idFor("done", sid)
+        // MessagingStyle with Reply and Mark as read: Android Auto and Wear OS
+        // read these aloud and take spoken replies (the CarPlay counterpart).
+        val hermesPerson = androidx.core.app.Person.Builder().setName("Hermes").setKey("hermes").setBot(true).build()
+        val me = androidx.core.app.Person.Builder().setName(L10n.tr("You")).setKey("me").build()
+        val style = NotificationCompat.MessagingStyle(me)
+            .setConversationTitle(title)
+            .addMessage(text ?: L10n.tr("Response ready"), System.currentTimeMillis(), hermesPerson)
+        val remoteInput = androidx.core.app.RemoteInput.Builder(NotificationActionReceiver.EXTRA_REPLY).setLabel(L10n.tr("Reply")).build()
+        fun broadcast(action: String, code: Int) = PendingIntent.getBroadcast(
+            context, code,
+            Intent(context, NotificationActionReceiver::class.java).setAction(action)
+                .putExtra(NotificationActionReceiver.EXTRA_SESSION, sid)
+                .putExtra(NotificationActionReceiver.EXTRA_NOTIFICATION, id),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE,
+        )
+        val reply = NotificationCompat.Action.Builder(0, L10n.tr("Reply"), broadcast(NotificationActionReceiver.ACTION_REPLY, id))
+            .addRemoteInput(remoteInput)
+            .setSemanticAction(NotificationCompat.Action.SEMANTIC_ACTION_REPLY)
+            .setShowsUserInterface(false)
+            .build()
+        val read = NotificationCompat.Action.Builder(0, L10n.tr("Mark as read"), broadcast(NotificationActionReceiver.ACTION_READ, id + 1))
+            .setSemanticAction(NotificationCompat.Action.SEMANTIC_ACTION_MARK_AS_READ)
+            .setShowsUserInterface(false)
+            .build()
         ConduitNotifications.post(
-            context, ConduitNotifications.idFor("done", sid),
-            ConduitNotifications.builder(context, channel).setContentTitle(title).setContentText(text)
-                .setStyle(NotificationCompat.BigTextStyle().bigText(text)).setContentIntent(open(sid)).setAutoCancel(true).build(),
+            context, id,
+            ConduitNotifications.builder(context, channel)
+                .setStyle(style)
+                .setContentTitle(title)
+                .setContentText(text)
+                .setCategory(NotificationCompat.CATEGORY_MESSAGE)
+                .setContentIntent(open(sid))
+                .addAction(reply)
+                .addInvisibleAction(read)
+                .setAutoCancel(true)
+                .build(),
         )
     }
 
