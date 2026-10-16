@@ -57,5 +57,6 @@ class AppSettings(context: Context) {
         const val CHAT_FONT_SCALE = "chat_font_scale"
         const val NOTIFICATIONS_ENABLED = "notifications_enabled"
         const val BACKGROUND_CONNECTION = "background_connection"
+        const val KANBAN_GROUP_RUNNING = "conduit.kanbanGroupRunningByProfile"
     }
 }

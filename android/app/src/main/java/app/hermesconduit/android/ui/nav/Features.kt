@@ -2,8 +2,11 @@ package app.hermesconduit.android.ui.nav
 
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.ViewKanban
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.vector.ImageVector
+import app.hermesconduit.android.ui.kanban.KanbanBoardScreen
+import app.hermesconduit.android.ui.kanban.kanbanSubFeatures
 import app.hermesconduit.android.ui.settings.SettingsScreen
 
 /**
@@ -22,6 +25,8 @@ class Feature(
 /** Every feature screen. Keep one entry per feature so additions merge cleanly. */
 val features: List<Feature> = listOf(
     Feature("settings", "Settings", Icons.Default.Settings) { back, nav -> SettingsScreen(back, nav) },
+    Feature("kanban", "Kanban", Icons.Default.ViewKanban) { back, nav -> KanbanBoardScreen(back, nav) },
+    *kanbanSubFeatures(),
 )
 
 fun feature(route: String): Feature? = features.firstOrNull { it.route == route.substringBefore('/') }
