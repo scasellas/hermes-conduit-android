@@ -105,6 +105,15 @@ fun BotsScreen(onBack: () -> Unit, navigate: (String) -> Unit, model: BotsViewMo
     var deleting by remember { mutableStateOf<BotProfile?>(null) }
 
     LaunchedEffect(Unit) { model.refresh() }
+    // conduit://bot/<profile> opens that bot's Bot Chat once the roster knows it.
+    val linked = app.hermesconduit.android.ui.LocalRouteArg.current
+    var linkHandled by remember { mutableStateOf(false) }
+    LaunchedEffect(linked, bots) {
+        val bot = linked?.let { name -> bots.firstOrNull { it.name.equals(name, ignoreCase = true) } } ?: return@LaunchedEffect
+        if (linkHandled) return@LaunchedEffect
+        linkHandled = true
+        model.openBotChat(bot, app) { navigate("home") }
+    }
     val visible = bots.filter { !it.isHiddenByMeta }
     val canManage = phase == BotModePhase.Available
 
