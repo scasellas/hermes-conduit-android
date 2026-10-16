@@ -32,6 +32,12 @@ behaviour. Simplify UI chrome where Android idioms differ, never the semantics.
 - `ui/components/ScreenScaffold.kt`: `ScreenScaffold`, `SettingsColumn`,
   `SettingsSection`, `SettingsRow`, `SettingsToggle`, `LoadingBox`,
   `EmptyState`, `ErrorText`. Use them so screens look consistent.
+- `core/audio/`: the reusable voice audio pipeline (capture with pre-roll and
+  levels, streamed PCM playback, the conversation audio route, speech
+  detection, the Hermes voice gateway: transcribe, speak-stream, live
+  transcription, speech-server relay). `ui/voice/VoiceHub` (`VoiceHub.get(context)`)
+  holds the app-wide voice services: Read Aloud, the classic conversation,
+  voice jobs and per-profile voice preferences. Live voice modes build on these.
 - Strings: wrap every user-visible string in `t("English text")` (composable)
   or `L10n.tr(...)` (non-composable). Use the iOS wording verbatim when it
   exists so the iOS translations apply; format args use `%s`/`%d`.

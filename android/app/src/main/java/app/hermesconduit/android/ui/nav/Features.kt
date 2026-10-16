@@ -18,6 +18,7 @@ import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.filled.Groups
+import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.vector.ImageVector
 import app.hermesconduit.android.ui.capabilities.CapabilitiesScreen
@@ -71,6 +72,8 @@ val features: List<Feature> = listOf(
     Feature("bots", "Bots", Icons.Default.SmartToy) { back, nav -> app.hermesconduit.android.ui.bots.BotsScreen(back, nav) },
     Feature("groups", "Group Chats", Icons.Default.Groups) { back, nav -> app.hermesconduit.android.ui.groups.GroupsScreen(back, nav) },
     Feature("groups.room", "Group Chat", Icons.Default.Groups, inDrawer = false) { back, _ -> app.hermesconduit.android.ui.groups.GroupRoomScreen(back) },
+    Feature("voice", "Voice conversation", Icons.Default.GraphicEq) { back, nav -> app.hermesconduit.android.ui.voice.VoiceConversationScreen(back, nav) },
+    Feature("settings.voice", "Voice", Icons.Default.GraphicEq, inDrawer = false, section = "Voice") { back, _ -> app.hermesconduit.android.ui.voice.VoiceSettingsScreen(back) },
 )
 
 fun feature(route: String): Feature? = features.firstOrNull { it.route == route.substringBefore('/') }

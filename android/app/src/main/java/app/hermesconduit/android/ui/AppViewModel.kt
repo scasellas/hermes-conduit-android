@@ -1004,13 +1004,22 @@ class AppViewModel(application: Application) : AndroidViewModel(application), Ch
     override fun send(text: String, attachments: List<app.hermesconduit.android.model.Attachment>) = send(text, attachments, null)
 
     fun send(text: String, attachments: List<app.hermesconduit.android.model.Attachment>, surface: String?) {
+        viewModelScope.launch { submitPrompt(text, attachments, surface) }
+    }
+
+    /**
+     * Sends a prompt (creating the chat first when needed) and reports whether
+     * Hermes accepted it. `surface` "voice-live" marks a spoken turn
+     * (`voice_turn`), so Hermes answers in a form meant to be read aloud.
+     */
+    suspend fun submitPrompt(text: String, attachments: List<app.hermesconduit.android.model.Attachment>, surface: String?): Boolean {
         val trimmed = text.trim()
-        if (trimmed.isEmpty() && attachments.isEmpty()) return
+        if (trimmed.isEmpty() && attachments.isEmpty()) return false
         app.hermesconduit.android.core.Haptics.light()
         val shown = listOf(trimmed, attachments.joinToString("\n") { "📎 ${it.name}" }).filter { it.isNotEmpty() }.joinToString("\n\n")
         val local = ChatMessage("local-${System.nanoTime()}", MessageRole.USER, shown, timestampMs = System.currentTimeMillis())
         _chat.update { it.copy(messages = it.messages + local, error = null, running = true) }
-        viewModelScope.launch {
+        run {
             try {
                 var runtimeId = _chat.value.runtimeId
                 if (runtimeId == null) {
@@ -1033,20 +1042,27 @@ class AppViewModel(application: Application) : AndroidViewModel(application), Ch
                     references += uploadAttachment(runtimeId, attachment) ?: continue
                 }
                 val outbound = BotMentionsHook.annotate(hermes, trimmed, conversationProfile)
-                val result = hermes.rpc(
-                    "prompt.submit",
-                    buildJsonObject {
-                        put("session_id", runtimeId)
-                        put("text", app.hermesconduit.android.model.Attachment.promptText(outbound, references))
-                        if (surface != null) put("surface", surface)
-                        if (surface == "voice") put("voice_turn", true)
-                    },
-                    app.hermesconduit.android.net.GatewayClient.timeoutFor("prompt.submit"),
-                ).obj
+                val voiceTurn = (surface == "voice" || surface == "voice-live") && !gatewayRefusesVoiceTurn
+                fun params(marksVoiceTurn: Boolean) = buildJsonObject {
+                    put("session_id", runtimeId)
+                    put("text", app.hermesconduit.android.model.Attachment.promptText(outbound, references))
+                    if (surface != null) put("surface", surface)
+                    if (marksVoiceTurn) put("voice_turn", true)
+                }
+                val timeout = app.hermesconduit.android.net.GatewayClient.timeoutFor("prompt.submit")
+                val result = try {
+                    hermes.rpc("prompt.submit", params(voiceTurn), timeout).obj
+                } catch (e: app.hermesconduit.android.net.RpcException) {
+                    // A Hermes from before `voice_turn` refuses the key: send the turn without it.
+                    if (!voiceTurn || e.code != 4000 || "invalid params" !in e.message.orEmpty() || "voice_turn" !in e.message.orEmpty()) throw e
+                    gatewayRefusesVoiceTurn = true
+                    hermes.rpc("prompt.submit", params(false), timeout).obj
+                }
                 when (result?.get("status").str) {
                     "queued" -> _chat.update { it.copy(notice = "Queued — Hermes will answer after the current turn.") }
                     "steered" -> _chat.update { it.copy(notice = "Sent as guidance for the running turn.") }
                 }
+                return true
             } catch (e: app.hermesconduit.android.net.RpcException) {
                 if (e.reason == "SESSION_NOT_OWNED" || e.message?.contains("SESSION_NOT_OWNED") == true) {
                     val (id, surface) = TakeoverState.details(e.message.orEmpty())
@@ -1056,8 +1072,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application), Ch
                 } else {
                     _chat.update { it.copy(running = false, error = e.message ?: "Couldn't send.") }
                 }
+                return false
             } catch (e: Exception) {
                 _chat.update { it.copy(running = false, error = e.message ?: "Couldn't send.") }
+                return false
             }
         }
     }
@@ -1103,6 +1121,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application), Ch
     }
 
     override fun dismissTakeover() = _chat.update { it.copy(takeover = null) }
+
+    /** Set once this gateway refused `prompt.submit`'s `voice_turn` key. */
+    private var gatewayRefusesVoiceTurn = false
 
     /**
      * Images go up with `image.attach_bytes` (falling back to a file when
