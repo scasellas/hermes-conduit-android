@@ -127,6 +127,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application), Ch
                 launch { app.hermesconduit.android.ui.bots.BotRoster.refresh(hermes) }
                 refreshLiveStatus()
                 app.hermesconduit.android.ui.present.PresentedScreens.sync(getApplication())
+                app.hermesconduit.android.ui.agentsettings.AgentSettingsSync.sync(getApplication())
                 // Reattach to the open chat with the new runtime, reloading the
                 // transcript since events were missed while disconnected.
                 _chat.value.sessionId?.let { resume(it, reloadHistory = true) }
@@ -341,6 +342,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application), Ch
         if ((event is StreamEvent.ToolStart && event.name.equals("conduit_present", true)) ||
             (event is StreamEvent.ToolComplete && event.name.equals("conduit_present", true))
         ) app.hermesconduit.android.ui.present.PresentedScreens.sync(getApplication())
+        if ((event is StreamEvent.ToolComplete && event.name.contains("conduit_settings", true))) app.hermesconduit.android.ui.agentsettings.AgentSettingsSync.sync(getApplication())
         if (chat.running && !next.running) next.sessionId?.let { offline.saveTranscript(hermes.connection.value?.id, hermes.profile.value, it, next.title, next.messages) }
         if (chat.running && !next.running) viewModelScope.launch {
             refreshSessions()

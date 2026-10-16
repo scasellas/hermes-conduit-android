@@ -78,6 +78,7 @@ private fun MainNavigation(viewModel: AppViewModel) {
         }
     }
     app.hermesconduit.android.ui.present.PresentedConfirmHost()
+    app.hermesconduit.android.ui.agentsettings.AgentSettingsHost()
     CompositionLocalProvider(LocalNavigate provides navigate, androidx.compose.ui.platform.LocalUriHandler provides uriHandler) {
         NavHost(nav, startDestination = "home") {
             composable("home") { MainScreen(viewModel, openFeature = navigate) }
