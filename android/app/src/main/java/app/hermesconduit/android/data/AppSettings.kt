@@ -65,5 +65,8 @@ class AppSettings(context: Context) {
         const val APP_ICON = "app_icon" // dark | light
 
         fun displayNameKey(dashboardId: String?, profile: String) = "display_name.${dashboardId ?: "-"}.$profile"
+        const val CAPABILITIES_TAB = "capabilities.tab"
+        const val CAPABILITIES_SKILLS_MOST_USED = "capabilities.skills.mostUsedFirst"
+        const val CAPABILITIES_TOOLS_MOST_USED = "capabilities.tools.mostUsedFirst"
     }
 }

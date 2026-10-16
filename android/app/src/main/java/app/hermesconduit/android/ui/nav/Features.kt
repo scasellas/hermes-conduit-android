@@ -3,6 +3,7 @@ package app.hermesconduit.android.ui.nav
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.Extension
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Security
@@ -12,6 +13,7 @@ import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.vector.ImageVector
+import app.hermesconduit.android.ui.capabilities.CapabilitiesScreen
 import app.hermesconduit.android.ui.settings.SettingsScreen
 
 /**
@@ -41,6 +43,7 @@ val features: List<Feature> = listOf(
     Feature("settings.chat", "Chat", Icons.Default.Chat, inDrawer = false, section = "Hermes") { back, _ -> app.hermesconduit.android.ui.settings.ChatSettingsPage(back) },
     Feature("settings.memory", "Memory & delegation", Icons.Default.Psychology, inDrawer = false, section = "Hermes") { back, _ -> app.hermesconduit.android.ui.settings.MemorySettingsPage(back) },
     Feature("settings.about", "About & privacy", Icons.Default.Info, inDrawer = false, section = "About") { back, _ -> app.hermesconduit.android.ui.settings.AboutPage(back) },
+    Feature("capabilities", "Capabilities", Icons.Default.Extension, inDrawer = true) { back, _ -> CapabilitiesScreen(back) },
 )
 
 fun feature(route: String): Feature? = features.firstOrNull { it.route == route.substringBefore('/') }

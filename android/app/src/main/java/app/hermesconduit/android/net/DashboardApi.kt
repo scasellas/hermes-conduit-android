@@ -279,8 +279,8 @@ class DashboardApi(
     // region Generic JSON (feature modules)
 
     /** `GET` a dashboard JSON route; arrays come back as `{"_array": …}`. */
-    suspend fun getJson(path: String, query: Map<String, String?> = emptyMap()): JsonObject =
-        execute(Request.Builder().url(url(path, query)).get().build())
+    suspend fun getJson(path: String, query: Map<String, String?> = emptyMap(), timeoutMs: Long? = null): JsonObject =
+        execute(Request.Builder().url(url(path, query)).get().build(), timeoutMs = timeoutMs)
 
     /** `POST`/`PUT`/`PATCH`/`DELETE` with an optional JSON body. */
     suspend fun sendJson(
@@ -288,13 +288,15 @@ class DashboardApi(
         path: String,
         body: JsonElement? = null,
         query: Map<String, String?> = emptyMap(),
+        /** Overrides the client's read timeout for slow routes (plugin installs). */
+        timeoutMs: Long? = null,
     ): JsonObject {
         val requestBody = when {
             body != null -> body.toString().toRequestBody(JSON)
             method == "DELETE" || method == "GET" -> null
             else -> ByteArray(0).toRequestBody(JSON)
         }
-        return execute(Request.Builder().url(url(path, query)).method(method, requestBody).build())
+        return execute(Request.Builder().url(url(path, query)).method(method, requestBody).build(), timeoutMs = timeoutMs)
     }
 
     /** Raw bytes of an authenticated route (files, images). */
@@ -311,8 +313,9 @@ class DashboardApi(
 
     // region Plumbing
 
-    private suspend fun execute(request: Request, authenticated: Boolean = true): JsonObject = withContext(Dispatchers.IO) {
-        http.newCall(request).execute().use { response ->
+    private suspend fun execute(request: Request, authenticated: Boolean = true, timeoutMs: Long? = null): JsonObject = withContext(Dispatchers.IO) {
+        val client = if (timeoutMs == null) http else http.newBuilder().readTimeout(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS).build()
+        client.newCall(request).execute().use { response ->
             if (response.isRedirect) {
                 val location = response.header("Location").orEmpty()
                 if (authenticated && "/login" in location) throw AuthExpiredException()
