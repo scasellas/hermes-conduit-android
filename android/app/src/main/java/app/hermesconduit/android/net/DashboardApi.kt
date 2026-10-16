@@ -33,7 +33,13 @@ class DashboardHttpException(val code: Int, val detail: String) : IOException(
     if (detail.isNotBlank()) detail else "The dashboard returned HTTP $code.",
 )
 
-data class AuthProviders(val supportsPassword: Boolean, val names: List<String>)
+data class AuthProviders(
+    val supportsPassword: Boolean,
+    val names: List<String>,
+    /** The single native-OAuth provider, when exactly one is offered. */
+    val oauthProvider: String? = null,
+    val hasOAuthProvider: Boolean = false,
+)
 
 data class SessionPage(val sessions: List<SessionSummary>, val hasMore: Boolean, val nextOffset: Int)
 
@@ -48,7 +54,12 @@ class DashboardApi(
     val cookieJar: SessionCookieJar,
     private val cloudflare: CloudflareAccess? = null,
     client: OkHttpClient = OkHttpClient(),
+    /** User-defined headers bound to this dashboard; sent over HTTPS only. */
+    private val customHeaders: Map<String, String> = emptyMap(),
 ) {
+    /** Native OAuth access token; when set, requests carry `Authorization: Bearer`. */
+    @Volatile var bearerToken: String? = null
+
     val baseUrl: String = ConnectionUrlPolicy.normalizedBaseUrl(baseUrl)
     private val base: HttpUrl = this.baseUrl.toHttpUrl()
 
@@ -60,7 +71,11 @@ class DashboardApi(
         .addInterceptor { chain ->
             val request = chain.request()
             val builder = request.newBuilder().header("Accept", "application/json")
-            if (request.url.isHttps) cloudflare?.apply(builder)
+            if (request.url.isHttps) {
+                cloudflare?.apply(builder)
+                CustomHeaders.apply(builder, customHeaders)
+            }
+            bearerToken?.let { builder.header("Authorization", "Bearer $it") }
             if (request.method != "GET" && request.method != "HEAD") builder.header("Origin", origin(request.url))
             chain.proceed(builder.build())
         }
@@ -78,11 +93,25 @@ class DashboardApi(
     suspend fun authProviders(): AuthProviders {
         val response = execute(Request.Builder().url(url("api/auth/providers")).get().build(), authenticated = false)
         val providers = response["providers"].arr ?: throw IOException("This server doesn't look like a Hermes dashboard.")
+        val oauth = providers.mapNotNull { it.obj }.filter {
+            it["supports_password"].bool == false && it["supports_session"].bool != false
+        }
         return AuthProviders(
             supportsPassword = providers.any { it.obj?.get("supports_password").bool == true },
             names = providers.mapNotNull { it.obj?.get("name").str },
+            oauthProvider = oauth.singleOrNull()?.get("name").str,
+            hasOAuthProvider = oauth.isNotEmpty(),
         )
     }
+
+    /** `GET /api/status` → whether `auth_flows` lists `native_pkce`. */
+    suspend fun supportsNativeOAuth(): Boolean {
+        val status = runCatching { execute(Request.Builder().url(url("api/status")).get().build(), authenticated = false) }.getOrNull()
+        return status?.get("auth_flows").arr?.any { it.str == "native_pkce" } == true
+    }
+
+    /** Public `/api/status` payload (version, gateway state…). */
+    suspend fun status(): JsonObject = execute(Request.Builder().url(url("api/status")).get().build(), authenticated = false)
 
     suspend fun passwordLogin(username: String, password: String) {
         val body = buildJsonObject {
@@ -222,6 +251,39 @@ class DashboardApi(
             snapshot["runtime_generation"]?.let { put("expected_generation", it) }
         }
     }
+
+    // region Generic JSON (feature modules)
+
+    /** `GET` a dashboard JSON route; arrays come back as `{"_array": …}`. */
+    suspend fun getJson(path: String, query: Map<String, String?> = emptyMap()): JsonObject =
+        execute(Request.Builder().url(url(path, query)).get().build())
+
+    /** `POST`/`PUT`/`PATCH`/`DELETE` with an optional JSON body. */
+    suspend fun sendJson(
+        method: String,
+        path: String,
+        body: JsonElement? = null,
+        query: Map<String, String?> = emptyMap(),
+    ): JsonObject {
+        val requestBody = when {
+            body != null -> body.toString().toRequestBody(JSON)
+            method == "DELETE" || method == "GET" -> null
+            else -> ByteArray(0).toRequestBody(JSON)
+        }
+        return execute(Request.Builder().url(url(path, query)).method(method, requestBody).build())
+    }
+
+    /** Raw bytes of an authenticated route (files, images). */
+    suspend fun getBytes(path: String, query: Map<String, String?> = emptyMap()): Pair<ByteArray, String?> =
+        withContext(Dispatchers.IO) {
+            http.newCall(Request.Builder().url(url(path, query)).get().build()).execute().use { response ->
+                if (response.code == 401) throw AuthExpiredException()
+                if (!response.isSuccessful) throw DashboardHttpException(response.code, errorDetail(response))
+                (response.body?.bytes() ?: ByteArray(0)) to response.header("Content-Type")
+            }
+        }
+
+    // endregion
 
     // region Plumbing
 

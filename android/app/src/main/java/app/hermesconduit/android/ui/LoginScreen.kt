@@ -18,7 +18,9 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -37,7 +39,12 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 
 @Composable
-fun LoginScreen(state: Screen.Login, onSignIn: (String, String, String, String, String) -> Unit) {
+fun LoginScreen(
+    state: Screen.Login,
+    onSignIn: (String, String, String, String, String) -> Unit,
+    onBrowserSignIn: (String, String, String) -> Unit = { _, _, _ -> },
+    onCancel: () -> Unit = {},
+) {
     var url by rememberSaveable { mutableStateOf(state.prefillUrl) }
     var username by rememberSaveable { mutableStateOf("") }
     var password by rememberSaveable { mutableStateOf("") }
@@ -123,6 +130,14 @@ fun LoginScreen(state: Screen.Login, onSignIn: (String, String, String, String, 
                 Button(onClick = submit, enabled = !state.busy && url.isNotBlank(), modifier = Modifier.fillMaxWidth().height(52.dp)) {
                     if (state.busy) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
                     else Text("Sign in")
+                }
+                OutlinedButton(
+                    onClick = { onBrowserSignIn(url, if (useServiceToken) cfId else "", if (useServiceToken) cfSecret else "") },
+                    enabled = !state.busy && url.isNotBlank(),
+                    modifier = Modifier.fillMaxWidth().height(52.dp),
+                ) { Text("Sign in with browser (Google, OIDC…)") }
+                if (state.canCancel) {
+                    TextButton(onClick = onCancel, modifier = Modifier.fillMaxWidth()) { Text("Cancel") }
                 }
                 Text(
                     "Conduit connects to the native Hermes dashboard (default port 9119), not the WebUI. " +

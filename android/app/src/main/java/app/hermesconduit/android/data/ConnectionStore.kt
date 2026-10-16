@@ -5,20 +5,38 @@ import android.content.SharedPreferences
 import androidx.core.content.edit
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.builtins.ListSerializer
+import kotlinx.serialization.json.Json
+import java.util.UUID
 
-/** What the app needs to reconnect to a dashboard without asking again. */
+/** One saved Hermes dashboard and what's needed to reconnect without asking. */
+@Serializable
 data class SavedConnection(
     val baseUrl: String,
     val username: String,
-    val password: String,
+    val password: String = "",
     val profile: String = "default",
     val cfClientId: String? = null,
     val cfClientSecret: String? = null,
-)
+    val id: String = UUID.randomUUID().toString(),
+    val name: String? = null,
+    /** "password" or "oauth". */
+    val authMode: String = "password",
+    val oauthAccessToken: String? = null,
+    val oauthRefreshToken: String? = null,
+    val oauthExpiresAt: Long? = null,
+    val oauthProvider: String? = null,
+    /** Extra request headers bound to this dashboard (HTTPS only). */
+    val customHeaders: Map<String, String> = emptyMap(),
+) {
+    val displayName: String get() = name?.takeIf { it.isNotBlank() } ?: baseUrl.substringAfter("://")
+}
 
 /**
  * Credential storage backed by EncryptedSharedPreferences (Android Keystore),
- * the counterpart of the iOS Keychain entries.
+ * the counterpart of the iOS Keychain entries. Holds every saved dashboard
+ * (the iOS SavedDashboardRegistry) plus each one's session cookies.
  */
 @Suppress("DEPRECATION") // security-crypto is deprecated but still the simplest Keystore-backed store.
 class ConnectionStore(context: Context) {
@@ -31,6 +49,9 @@ class ConnectionStore(context: Context) {
         open(context)
     }
 
+    private val json = Json { ignoreUnknownKeys = true }
+    private val listSerializer = ListSerializer(SavedConnection.serializer())
+
     private fun open(context: Context): SharedPreferences = EncryptedSharedPreferences.create(
         context,
         FILE,
@@ -39,53 +60,74 @@ class ConnectionStore(context: Context) {
         EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
     )
 
+    fun all(): List<SavedConnection> {
+        migrateLegacy()
+        val raw = prefs.getString(KEY_DASHBOARDS, null) ?: return emptyList()
+        return runCatching { json.decodeFromString(listSerializer, raw) }.getOrDefault(emptyList())
+    }
+
+    private fun writeAll(list: List<SavedConnection>) = prefs.edit { putString(KEY_DASHBOARDS, json.encodeToString(listSerializer, list)) }
+
+    var activeId: String?
+        get() = prefs.getString(KEY_ACTIVE, null)
+        set(value) = prefs.edit { putString(KEY_ACTIVE, value) }
+
     fun load(): SavedConnection? {
-        val baseUrl = prefs.getString(KEY_BASE_URL, null) ?: return null
-        return SavedConnection(
-            baseUrl = baseUrl,
-            username = prefs.getString(KEY_USERNAME, "").orEmpty(),
-            password = prefs.getString(KEY_PASSWORD, "").orEmpty(),
-            profile = prefs.getString(KEY_PROFILE, "default") ?: "default",
-            cfClientId = prefs.getString(KEY_CF_ID, null),
-            cfClientSecret = prefs.getString(KEY_CF_SECRET, null),
-        )
+        val list = all()
+        return list.firstOrNull { it.id == activeId } ?: list.firstOrNull()
     }
 
-    fun save(connection: SavedConnection) = prefs.edit {
-        putString(KEY_BASE_URL, connection.baseUrl)
-        putString(KEY_USERNAME, connection.username)
-        putString(KEY_PASSWORD, connection.password)
-        putString(KEY_PROFILE, connection.profile)
-        putString(KEY_CF_ID, connection.cfClientId)
-        putString(KEY_CF_SECRET, connection.cfClientSecret)
+    /** Saves (insert or replace by id) and makes it active. */
+    fun save(connection: SavedConnection) {
+        val list = all().filterNot { it.id == connection.id || (it.baseUrl == connection.baseUrl && it.username == connection.username) }
+        writeAll(list + connection)
+        activeId = connection.id
     }
 
-    fun saveProfile(profile: String) = prefs.edit { putString(KEY_PROFILE, profile) }
+    fun update(connection: SavedConnection) {
+        writeAll(all().map { if (it.id == connection.id) connection else it })
+    }
+
+    fun remove(id: String) {
+        writeAll(all().filterNot { it.id == id })
+        prefs.edit { remove(KEY_COOKIES_PREFIX + id) }
+        if (activeId == id) activeId = all().firstOrNull()?.id
+    }
+
+    fun cookies(id: String): String? = prefs.getString(KEY_COOKIES_PREFIX + id, null)
+
+    fun saveCookies(id: String, value: String) = prefs.edit { putString(KEY_COOKIES_PREFIX + id, value) }
 
     /** Last base URL entered, kept after sign-out to prefill the form. */
-    fun lastBaseUrl(): String? = prefs.getString(KEY_LAST_BASE_URL, null)
+    var lastBaseUrl: String?
+        get() = prefs.getString(KEY_LAST_BASE_URL, null)
+        set(value) = prefs.edit { putString(KEY_LAST_BASE_URL, value) }
 
-    var cookies: String?
-        get() = prefs.getString(KEY_COOKIES, null)
-        set(value) = prefs.edit { putString(KEY_COOKIES, value) }
-
-    fun clear() {
-        val last = prefs.getString(KEY_BASE_URL, null)
+    /** The single-dashboard layout of the first Android release. */
+    private fun migrateLegacy() {
+        val baseUrl = prefs.getString("base_url", null) ?: return
+        val legacy = SavedConnection(
+            baseUrl = baseUrl,
+            username = prefs.getString("username", "").orEmpty(),
+            password = prefs.getString("password", "").orEmpty(),
+            profile = prefs.getString("profile", "default") ?: "default",
+            cfClientId = prefs.getString("cf_client_id", null),
+            cfClientSecret = prefs.getString("cf_client_secret", null),
+        )
+        val cookies = prefs.getString("cookies", null)
         prefs.edit {
-            clear()
-            if (last != null) putString(KEY_LAST_BASE_URL, last)
+            listOf("base_url", "username", "password", "profile", "cf_client_id", "cf_client_secret", "cookies").forEach { remove(it) }
+            putString(KEY_DASHBOARDS, json.encodeToString(listSerializer, listOf(legacy)))
+            putString(KEY_ACTIVE, legacy.id)
+            if (cookies != null) putString(KEY_COOKIES_PREFIX + legacy.id, cookies)
         }
     }
 
     private companion object {
         const val FILE = "conduit_connection"
-        const val KEY_BASE_URL = "base_url"
+        const val KEY_DASHBOARDS = "dashboards_v2"
+        const val KEY_ACTIVE = "active_dashboard"
+        const val KEY_COOKIES_PREFIX = "cookies_"
         const val KEY_LAST_BASE_URL = "last_base_url"
-        const val KEY_USERNAME = "username"
-        const val KEY_PASSWORD = "password"
-        const val KEY_PROFILE = "profile"
-        const val KEY_CF_ID = "cf_client_id"
-        const val KEY_CF_SECRET = "cf_client_secret"
-        const val KEY_COOKIES = "cookies"
     }
 }

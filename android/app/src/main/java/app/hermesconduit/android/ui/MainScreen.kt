@@ -2,6 +2,7 @@ package app.hermesconduit.android.ui
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -103,6 +104,8 @@ interface DrawerActions {
     fun archiveSession(id: String)
     fun deleteSession(id: String)
     fun signOut()
+    fun switchDashboard(id: String)
+    fun addDashboard()
 }
 
 @Composable
@@ -111,7 +114,13 @@ private fun SessionDrawer(viewModel: AppViewModel, onPicked: () -> Unit) {
     val chat by viewModel.chat.collectAsStateWithLifecycle()
     val profile by viewModel.profile.collectAsStateWithLifecycle()
     val profiles by viewModel.profiles.collectAsStateWithLifecycle()
-    SessionDrawerContent(sessions, chat.sessionId, profile, profiles, viewModel.dashboardUrl, viewModel, onPicked)
+    val dashboards by viewModel.dashboards.collectAsStateWithLifecycle()
+    val active by viewModel.connection.collectAsStateWithLifecycle()
+    SessionDrawerContent(
+        sessions, chat.sessionId, profile, profiles, viewModel.dashboardUrl, viewModel, onPicked,
+        dashboards = dashboards.map { it.id to it.displayName },
+        activeDashboardId = active?.id,
+    )
 }
 
 @Composable
@@ -123,21 +132,41 @@ fun SessionDrawerContent(
     dashboardUrl: String?,
     actions: DrawerActions,
     onPicked: () -> Unit,
+    dashboards: List<Pair<String, String>> = emptyList(),
+    activeDashboardId: String? = null,
 ) {
     var profileMenu by remember { mutableStateOf(false) }
+    var dashboardMenu by remember { mutableStateOf(false) }
     var confirmSignOut by remember { mutableStateOf(false) }
 
     Column(Modifier.fillMaxHeight()) {
         Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 8.dp, top = 16.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text("Chats", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
-                Text(
-                    dashboardUrl.orEmpty(),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
+                Box {
+                    Text(
+                        (dashboards.firstOrNull { it.first == activeDashboardId }?.second ?: dashboardUrl.orEmpty()) + "  ▾",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.clickable { dashboardMenu = true }.padding(vertical = 4.dp),
+                    )
+                    DropdownMenu(expanded = dashboardMenu, onDismissRequest = { dashboardMenu = false }) {
+                        dashboards.forEach { (id, name) ->
+                            DropdownMenuItem(
+                                text = { Text(name, fontWeight = if (id == activeDashboardId) FontWeight.Bold else FontWeight.Normal) },
+                                onClick = {
+                                    dashboardMenu = false
+                                    actions.switchDashboard(id)
+                                    onPicked()
+                                },
+                            )
+                        }
+                        HorizontalDivider()
+                        DropdownMenuItem(text = { Text("Add dashboard…") }, onClick = { dashboardMenu = false; actions.addDashboard() })
+                    }
+                }
             }
             IconButton(onClick = actions::refreshSessionsAsync) { Icon(Icons.Default.Refresh, "Refresh") }
             IconButton(onClick = { actions.newChat(); onPicked() }) { Icon(Icons.Default.Add, "New chat") }

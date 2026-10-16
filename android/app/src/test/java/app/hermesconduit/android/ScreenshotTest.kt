@@ -1,5 +1,6 @@
 package app.hermesconduit.android
 
+import app.hermesconduit.android.core.LinkState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -15,7 +16,6 @@ import app.hermesconduit.android.ui.ChatActions
 import app.hermesconduit.android.ui.ChatContent
 import app.hermesconduit.android.ui.ChatState
 import app.hermesconduit.android.ui.DrawerActions
-import app.hermesconduit.android.ui.LinkState
 import app.hermesconduit.android.ui.LoginScreen
 import app.hermesconduit.android.ui.Screen
 import app.hermesconduit.android.ui.SessionDrawerContent
@@ -53,11 +53,13 @@ class ScreenshotTest {
         override fun archiveSession(id: String) = Unit
         override fun deleteSession(id: String) = Unit
         override fun signOut() = Unit
+        override fun switchDashboard(id: String) = Unit
+        override fun addDashboard() = Unit
     }
 
     @Test
     fun login() = paparazzi.snapshot {
-        ConduitTheme(dark = true) { LoginScreen(Screen.Login("http://192.168.1.10:9119", error = "Incorrect username or password.")) { _, _, _, _, _ -> } }
+        ConduitTheme(dark = true) { LoginScreen(Screen.Login("http://192.168.1.10:9119", error = "Incorrect username or password."), onSignIn = { _, _, _, _, _ -> }) }
     }
 
     @Test

@@ -47,6 +47,7 @@ class GatewayClient(
     private val scope: CoroutineScope,
     private val profile: String,
     private val cloudflare: CloudflareAccess? = null,
+    private val customHeaders: Map<String, String> = emptyMap(),
 ) {
     enum class State { CONNECTING, CONNECTED, CLOSED }
 
@@ -55,6 +56,10 @@ class GatewayClient(
     private var socket: WebSocket? = null
     private var keepAlive: Job? = null
     @Volatile private var lastInboundMs = System.currentTimeMillis()
+
+    /** The `client.capabilities` reply, once the gateway is ready. */
+    @Volatile var capabilities: JsonObject? = null
+        private set
 
     private val _state = MutableStateFlow(State.CONNECTING)
     val state: StateFlow<State> = _state
@@ -67,7 +72,10 @@ class GatewayClient(
         val opened = CompletableDeferred<Unit>()
         val url = ConnectionUrlPolicy.webSocketUrl(baseUrl, "api/ws", mapOf("ticket" to ticket))
         val builder = Request.Builder().url(url).header("X-Conduit-Client", "conduit")
-        if (url.startsWith("wss://")) cloudflare?.apply(builder)
+        if (url.startsWith("wss://")) {
+            cloudflare?.apply(builder)
+            CustomHeaders.apply(builder, customHeaders)
+        }
         socket = http.newWebSocket(builder.build(), object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 _state.value = State.CONNECTED
@@ -168,6 +176,7 @@ class GatewayClient(
                 if (event is StreamEvent.GatewayReady) {
                     scope.launch {
                         runCatching { request("client.capabilities", buildJsonObject { put("server_requests", true) }) }
+                            .onSuccess { capabilities = it.obj }
                     }
                 }
                 _events.tryEmit(event)
