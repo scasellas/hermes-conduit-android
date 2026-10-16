@@ -284,7 +284,7 @@ fun ModelDefaultsPage(onBack: () -> Unit) {
     var loading by remember { mutableStateOf(true) }
     var status by remember { mutableStateOf<String?>(null) }
     val hermes = context.hermes
-    val profile = hermes.profile.value
+    val profile by hermes.profile.collectAsStateWithLifecycle()
     val query = mapOf("profile" to profile.takeIf { it != "default" })
     LaunchedEffect(Unit) {
         options = loadModelOptions(context)
@@ -352,7 +352,8 @@ fun ProfileSettingsPage(onBack: () -> Unit) {
     val context = LocalContext.current
     val settings = context.appSettings
     val profile by context.hermes.profile.collectAsStateWithLifecycle()
-    val key = AppSettings.displayNameKey(context.hermes.connection.value?.id, profile)
+    val connection by context.hermes.connection.collectAsStateWithLifecycle()
+    val key = AppSettings.displayNameKey(connection?.id, profile)
     var name by remember(key) { mutableStateOf(settings.getString(key, "")) }
     var saved by remember { mutableStateOf(false) }
     ScreenScaffold(t("Profile"), onBack) { padding ->

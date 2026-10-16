@@ -9,6 +9,7 @@ sealed interface AppLink {
     data class Settings(val page: String) : AppLink
     data object NewChat : AppLink
     data object Voice : AppLink
+    data object Open : AppLink
 
     companion object {
         private val token = Regex("^[A-Za-z0-9_\\-.:]{1,128}$")
@@ -19,6 +20,7 @@ sealed interface AppLink {
             val host = uri.host?.lowercase()
             if (host == "new") return NewChat
             if (host == "voice") return Voice
+            if (host == "open") return Open
             val id = uri.path?.trim('/')?.takeIf { it.isNotEmpty() && '/' !in it } ?: return null
             val link = when (host) {
                 "session" -> Session(id, uri.getQueryParameter("profile")?.trim()?.ifEmpty { null })

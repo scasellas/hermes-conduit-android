@@ -52,6 +52,7 @@ val features: List<Feature> = listOf(
     Feature("settings.memory", "Memory & delegation", Icons.Default.Psychology, inDrawer = false, section = "Hermes") { back, _ -> app.hermesconduit.android.ui.settings.MemorySettingsPage(back) },
     Feature("settings.notifications", "Notifications", Icons.Default.Notifications, inDrawer = false, section = "App") { back, _ -> app.hermesconduit.android.notify.NotificationSettingsPage(back) },
     Feature("settings.connectionlog", "Connection log", Icons.Default.Info, inDrawer = false, section = "Server") { back, _ -> app.hermesconduit.android.ui.settings.ConnectionLogPage(back) },
+    Feature("settings.screenquestion", "Ask Hermes About Screen", Icons.Default.Info, inDrawer = false, section = "App") { back, _ -> app.hermesconduit.android.assist.ScreenQuestionPage(back) },
     Feature("settings.about", "About & privacy", Icons.Default.Info, inDrawer = false, section = "About") { back, _ -> app.hermesconduit.android.ui.settings.AboutPage(back) },
     Feature("capabilities", "Capabilities", Icons.Default.Extension, inDrawer = true) { back, _ -> CapabilitiesScreen(back) },
     Feature("cron", "Cron", Icons.Default.Schedule) { back, nav -> app.hermesconduit.android.ui.cron.CronScreen(back, nav) },

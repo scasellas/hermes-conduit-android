@@ -439,6 +439,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application), Ch
                 .sortedWith(compareByDescending<SessionSummary> { it.pinned }.thenByDescending { it.lastActiveMs ?: 0 })
             _sessions.update { it.copy(sessions = sorted, loading = false, error = null, offline = false) }
             offline.saveSessions(hermes.connection.value?.id, profile, sorted)
+            app.hermesconduit.android.widget.WidgetData.refresh(getApplication())
         } catch (e: AuthExpiredException) {
             _sessions.update { it.copy(loading = false) }
         } catch (e: Exception) {
@@ -518,6 +519,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application), Ch
             is app.hermesconduit.android.core.AppLink.Settings -> _openRoute.value = app.hermesconduit.android.core.AppLink.settingsRoute(link.page)
             app.hermesconduit.android.core.AppLink.NewChat -> { newChat(); _openRoute.value = "home" }
             app.hermesconduit.android.core.AppLink.Voice -> _openRoute.value = "voice"
+            app.hermesconduit.android.core.AppLink.Open -> Unit
         }
     }
 
