@@ -19,6 +19,7 @@ import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.LocationOn
@@ -77,6 +78,7 @@ val features: List<Feature> = listOf(
     Feature("groups.room", "Group Chat", Icons.Default.Groups, inDrawer = false) { back, _ -> app.hermesconduit.android.ui.groups.GroupRoomScreen(back) },
     Feature("voice", "Voice conversation", Icons.Default.GraphicEq) { back, nav -> app.hermesconduit.android.ui.voice.VoiceConversationScreen(back, nav) },
     Feature("settings.voice", "Voice", Icons.Default.GraphicEq, inDrawer = false, section = "Voice") { back, _ -> app.hermesconduit.android.ui.voice.VoiceSettingsScreen(back) },
+    Feature("settings.calls", "Calls from Hermes", Icons.Default.Call, inDrawer = false, section = "Voice") { back, _ -> app.hermesconduit.android.calls.HermesCallSettingsPage(back) },
     Feature("settings.health", "Health", Icons.Default.Favorite, inDrawer = false, section = "On this device") { back, _ -> app.hermesconduit.android.ui.health.HealthSettingsScreen(back) },
     Feature("settings.phone", "Calendar & phone", Icons.Default.CalendarMonth, inDrawer = false, section = "On this device") { back, _ -> app.hermesconduit.android.ui.phone.PhoneSettingsScreen(back) },
     Feature("settings.location", "Location", Icons.Default.LocationOn, inDrawer = false, section = "On this device") { back, _ -> app.hermesconduit.android.ui.location.LocationSettingsScreen(back) },

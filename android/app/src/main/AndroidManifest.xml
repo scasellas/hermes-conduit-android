@@ -13,6 +13,8 @@
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <!-- Calls from Hermes ring full screen; wake phrase hits open voice from the background. -->
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
 
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
@@ -213,6 +215,22 @@
             android:name=".ui.voice.ReadAloudService"
             android:exported="false"
             android:foregroundServiceType="mediaPlayback" />
+        <activity
+            android:name=".calls.HermesCallActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:launchMode="singleInstance"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
+            android:taskAffinity="app.hermesconduit.android.call"
+            android:theme="@style/Theme.Conduit" />
+        <receiver
+            android:name=".calls.HermesCallReceiver"
+            android:exported="false" />
+        <service
+            android:name=".wake.WakeListeningService"
+            android:exported="false"
+            android:foregroundServiceType="microphone" />
         <service
             android:name=".ui.voice.VoiceConversationService"
             android:exported="false"

@@ -48,6 +48,8 @@ class NotificationMonitor(private val context: Context) {
     fun start() {
         if (jobs.isNotEmpty()) return
         ConduitNotifications.ensureChannels(context)
+        // Calls from Hermes ride the same socket (Android has no VoIP push relay).
+        app.hermesconduit.android.calls.HermesCalls.get(context).start()
         jobs = listOf(
             hermes.scope.launch { hermes.events.collect(::onEvent) },
             hermes.scope.launch {
@@ -120,6 +122,7 @@ class NotificationMonitor(private val context: Context) {
             val status = row["status"].str ?: continue
             seen += id
             val before = lastStatus.put(id, status)
+            if ((before == "working" || before == "waiting") && status == "idle") app.hermesconduit.android.calls.HermesCalls.get(context).sessionIdle(id)
             if (id in turns) continue // the event path handles attached chats
             if (status == "waiting" && pref(NotificationPrefs.APPROVAL) && shouldNotify(id)) {
                 val pending = runCatching { hermes.rpc("approval.pending", buildJsonObject { put("session_id", id) }).obj }.getOrNull()
@@ -133,6 +136,7 @@ class NotificationMonitor(private val context: Context) {
         // Rows that dropped off the active list finished too.
         (lastStatus.keys - seen).toList().forEach { id ->
             val before = lastStatus.remove(id)
+            if (before == "working" || before == "waiting") app.hermesconduit.android.calls.HermesCalls.get(context).sessionIdle(id)
             if ((before == "working" || before == "waiting") && pref(NotificationPrefs.RESPONSE) && shouldNotify(id) && sourceAllowed(id)) {
                 completion(id, title(id), L10n.tr("Response ready"))
             }

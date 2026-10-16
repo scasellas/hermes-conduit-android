@@ -519,6 +519,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application), Ch
 
     fun consumeOpenRoute() { _openRoute.value = null }
 
+    /** Opens a route from outside the navigation host (an answered call, a wake phrase). */
+    fun requestRoute(route: String) { _openRoute.value = route }
+
     fun handleLink(link: app.hermesconduit.android.core.AppLink) {
         when (link) {
             is app.hermesconduit.android.core.AppLink.Session -> openFromNotification(link.id, null, null, link.profile)

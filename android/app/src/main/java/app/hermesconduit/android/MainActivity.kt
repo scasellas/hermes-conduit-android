@@ -9,6 +9,8 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.fragment.app.FragmentActivity
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.hermesconduit.android.core.L10n
 import app.hermesconduit.android.core.LocalLanguage
@@ -55,6 +57,16 @@ class MainActivity : FragmentActivity() {
                 return
             }
         }
+        intent.getStringExtra(app.hermesconduit.android.calls.HermesCallNotifications.EXTRA_CALL)?.let { routing ->
+            intent.removeExtra(app.hermesconduit.android.calls.HermesCallNotifications.EXTRA_CALL)
+            answerHermesCall(routing)
+            return
+        }
+        if (intent.getBooleanExtra(app.hermesconduit.android.wake.WakePhrase.EXTRA_WAKE, false)) {
+            intent.removeExtra(app.hermesconduit.android.wake.WakePhrase.EXTRA_WAKE)
+            app.hermesconduit.android.wake.WakePhrase.get(this).launchPending(viewModel)
+            return
+        }
         val session = intent.getStringExtra(app.hermesconduit.android.notify.ConduitNotifications.EXTRA_SESSION) ?: return
         viewModel.openFromNotification(
             session,
@@ -63,6 +75,16 @@ class MainActivity : FragmentActivity() {
             intent.getStringExtra(app.hermesconduit.android.notify.ConduitNotifications.EXTRA_PROFILE),
         )
         intent.removeExtra(app.hermesconduit.android.notify.ConduitNotifications.EXTRA_SESSION)
+    }
+
+    /** An answered call from Hermes (or Talk on its notice): its chat, then voice with what came of the job. */
+    private fun answerHermesCall(routing: String) {
+        val calls = app.hermesconduit.android.calls.HermesCalls.get(this)
+        val target = calls.answer(app.hermesconduit.android.calls.HermesCallNotifications.target(routing)) ?: return
+        viewModel.openFromNotification(target.durableSessionID ?: target.sessionId, target.call.title, target.dashboardID, target.profile)
+        lifecycleScope.launch {
+            if (calls.awaitVoice(target)) viewModel.requestRoute(app.hermesconduit.android.ui.voice.VoiceLaunch.route(this@MainActivity))
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {

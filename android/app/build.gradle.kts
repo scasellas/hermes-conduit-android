@@ -69,6 +69,9 @@ dependencies {
     implementation("androidx.work:work-runtime-ktx:2.10.1")
     // X25519, HKDF and ChaCha20-Poly1305 for the sealed uploads (already pulled in by security-crypto).
     implementation("com.google.crypto.tink:tink-android:1.8.0")
+    // Wake phrase: on-device keyword spotting, and unpacking the model archive (.tar.bz2).
+    implementation("com.github.k2-fsa.sherpa-onnx:sherpa-onnx:v1.13.8@aar")
+    implementation("org.apache.commons:commons-compress:1.27.1")
     debugImplementation("androidx.compose.ui:ui-tooling")
 
     testImplementation("junit:junit:4.13.2")

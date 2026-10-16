@@ -233,6 +233,8 @@ fun VoiceSettingsScreen(onBack: () -> Unit) {
                 Footnote(t("The screen stays on while a voice conversation is open, including the live voice modes. When off, the phone locks on its usual timer: live voice calls keep going in the background, and a classic voice conversation does too with Keep Listening When Locked on. Applies to this device."))
             }
 
+            app.hermesconduit.android.wake.WakePhraseSettingsSection(vm.profile)
+
             // Read Aloud
             SettingsSection(t("Read Aloud"), footer = t("How fast the speaker button under a reply reads it aloud, without changing the voice's pitch. Applies from the next reply you play, on this device. Voice conversations always play at normal speed.")) {
                 val stored by context.appSettings.float(AppSettings.READ_ALOUD_SPEED, 1f).collectAsStateWithLifecycle()
@@ -518,7 +520,7 @@ private fun SpokenControlsSection(vm: VoiceSettingsViewModel) {
 
 /** View, add, edit and delete phrases (down to an empty list, which turns that command off). */
 @Composable
-private fun PhraseListEditor(title: String, purpose: String, phrases: List<String>, onChange: (List<String>) -> Unit) {
+internal fun PhraseListEditor(title: String, purpose: String, phrases: List<String>, onChange: (List<String>) -> Unit) {
     var draft by remember { mutableStateOf("") }
     var editingIndex by remember { mutableStateOf<Int?>(null) }
     fun save(updated: List<String>) {

@@ -20,6 +20,7 @@ class ConduitApplication : Application() {
         app.hermesconduit.android.notify.ConnectionService.sync(this)
         app.hermesconduit.android.ui.voice.VoiceHub.install(this)
         app.hermesconduit.android.ui.device.DeviceSharing.start(this)
+        app.hermesconduit.android.wake.WakePhrase.get(this).start()
     }
 }
 

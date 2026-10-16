@@ -101,6 +101,29 @@ class VoiceBackgroundJobSupervisor(
 
     val activeJobCount: Int get() = _jobs.value.count { it.status.isActive }
 
+    /** What an answered call from Hermes says first (#449), spoken at the conversation's first listening window. */
+    private var callOpening: String? = null
+
+    /** Queues a call's spoken brief; the next notice the conversation takes is this one. */
+    fun queueCallOpening(text: String) {
+        callOpening = text
+        onNoticePending?.invoke()
+    }
+
+    /** The call ended or voice didn't open: its brief isn't said. */
+    fun clearCallOpening(text: String? = null) {
+        if (text == null || callOpening == text) callOpening = null
+    }
+
+    /** The call tells the user how these jobs went: no notice announces them again. */
+    fun noteCallAnswered(sessionIds: List<String>) {
+        val ids = sessionIds.filter { it.isNotEmpty() }.toSet()
+        if (ids.isEmpty()) return
+        for (job in _jobs.value) {
+            if (ids.any(job::owns) && !job.status.isActive) update(job.id) { it.copy(outcomeDelivered = true) }
+        }
+    }
+
     private fun job(id: String) = _jobs.value.firstOrNull { it.id == id }
 
     private fun update(id: String, change: (VoiceBackgroundJob) -> VoiceBackgroundJob) {
@@ -286,6 +309,10 @@ class VoiceBackgroundJobSupervisor(
     }
 
     override fun takePendingNotice(): VoiceBackgroundJobNotice? {
+        callOpening?.let { brief ->
+            callOpening = null
+            return VoiceBackgroundJobNotice.Speak(brief)
+        }
         try {
             for (job in _jobs.value) {
                 if (job.status == VoiceBackgroundJob.Status.NeedsInput && !job.inputRequestDelivered) {
