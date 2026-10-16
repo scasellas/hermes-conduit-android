@@ -14,3 +14,4 @@ dependencyResolutionManagement {
 }
 rootProject.name = "HermesConduit"
 include(":app")
+include(":wear")

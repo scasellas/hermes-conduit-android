@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Talk to Hermes from the launcher and assistant (iOS ConduitWatchShortcuts). -->
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:enabled="true"
+        android:icon="@drawable/ic_talk"
+        android:shortcutId="talk"
+        android:shortcutShortLabel="@string/talk_to_hermes">
+        <intent
+            android:action="app.hermesconduit.android.wear.TALK"
+            android:targetClass="app.hermesconduit.android.wear.MainActivity"
+            android:targetPackage="app.hermesconduit.android" />
+    </shortcut>
+</shortcuts>
