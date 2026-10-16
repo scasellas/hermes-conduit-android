@@ -89,6 +89,7 @@ import com.mikepenz.markdown.model.rememberMarkdownState
 /** Everything the chat surface can ask of the app. */
 interface ChatActions {
     fun send(text: String)
+    fun send(text: String, attachments: List<app.hermesconduit.android.model.Attachment>) = send(text)
     fun stop()
     fun loadEarlier()
     fun dismissNotice()
@@ -172,10 +173,9 @@ fun ChatContent(
             chat.approval?.let { ApprovalCard(it, onChoice = actions::respondApproval) }
             chat.clarify?.let { ClarifyCard(it, onAnswer = { answers -> actions.answerClarify(it, answers) }) }
             Composer(
-                running = chat.running,
+                chat = chat,
                 enabled = link == LinkState.CONNECTED,
-                onSend = actions::send,
-                onStop = actions::stop,
+                actions = actions,
             )
         }
     }
@@ -456,41 +456,6 @@ private fun DecisionCard(content: @Composable () -> Unit) {
         modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
     ) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) { content() }
-    }
-}
-
-@Composable
-private fun Composer(running: Boolean, enabled: Boolean, onSend: (String) -> Unit, onStop: () -> Unit) {
-    var text by rememberSaveable { mutableStateOf("") }
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .navigationBarsPadding()
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.Bottom,
-    ) {
-        TextField(
-            value = text,
-            onValueChange = { text = it },
-            placeholder = { Text(if (running) "Steer the running turn…" else "Message Hermes") },
-            modifier = Modifier.weight(1f).heightIn(min = 52.dp, max = 200.dp),
-            shape = RoundedCornerShape(26.dp),
-            colors = TextFieldDefaults.colors(
-                focusedIndicatorColor = Color.Transparent,
-                unfocusedIndicatorColor = Color.Transparent,
-                disabledIndicatorColor = Color.Transparent,
-            ),
-        )
-        Spacer(Modifier.width(8.dp))
-        when {
-            text.isNotBlank() -> FilledIconButton(
-                onClick = { onSend(text); text = "" },
-                enabled = enabled,
-                modifier = Modifier.size(52.dp),
-            ) { Icon(Icons.AutoMirrored.Filled.Send, "Send") }
-            running -> FilledIconButton(onClick = onStop, modifier = Modifier.size(52.dp)) { Icon(Icons.Default.Stop, "Stop") }
-            else -> FilledIconButton(onClick = {}, enabled = false, modifier = Modifier.size(52.dp)) { Icon(Icons.AutoMirrored.Filled.Send, "Send") }
-        }
     }
 }
 

@@ -397,10 +397,15 @@ class AppViewModel(application: Application) : AndroidViewModel(application), Ch
         }
     }
 
-    override fun send(text: String) {
+    override fun send(text: String) = send(text, emptyList(), null)
+
+    override fun send(text: String, attachments: List<app.hermesconduit.android.model.Attachment>) = send(text, attachments, null)
+
+    fun send(text: String, attachments: List<app.hermesconduit.android.model.Attachment>, surface: String?) {
         val trimmed = text.trim()
-        if (trimmed.isEmpty()) return
-        val local = ChatMessage("local-${System.nanoTime()}", MessageRole.USER, trimmed, timestampMs = System.currentTimeMillis())
+        if (trimmed.isEmpty() && attachments.isEmpty()) return
+        val shown = listOf(trimmed, attachments.joinToString("\n") { "📎 ${it.name}" }).filter { it.isNotEmpty() }.joinToString("\n\n")
+        val local = ChatMessage("local-${System.nanoTime()}", MessageRole.USER, shown, timestampMs = System.currentTimeMillis())
         _chat.update { it.copy(messages = it.messages + local, error = null, running = true) }
         viewModelScope.launch {
             try {
@@ -415,14 +420,21 @@ class AppViewModel(application: Application) : AndroidViewModel(application), Ch
                     ).obj
                     runtimeId = created?.get("session_id").str ?: error("The gateway didn't create a session.")
                     val stored = created?.get("stored_session_id").str ?: runtimeId
-                    _chat.update { it.copy(runtimeId = runtimeId, sessionId = stored, title = trimmed.take(60)) }
+                    _chat.update { it.copy(runtimeId = runtimeId, sessionId = stored, title = trimmed.ifEmpty { attachments.first().name }.take(60)) }
+                }
+                val references = mutableListOf<String>()
+                for (attachment in attachments) {
+                    references += uploadAttachment(runtimeId, attachment) ?: continue
                 }
                 val result = hermes.rpc(
                     "prompt.submit",
                     buildJsonObject {
                         put("session_id", runtimeId)
-                        put("text", trimmed)
+                        put("text", app.hermesconduit.android.model.Attachment.promptText(trimmed, references))
+                        if (surface != null) put("surface", surface)
+                        if (surface == "voice") put("voice_turn", true)
                     },
+                    app.hermesconduit.android.net.GatewayClient.timeoutFor("prompt.submit"),
                 ).obj
                 when (result?.get("status").str) {
                     "queued" -> _chat.update { it.copy(notice = "Queued — Hermes will answer after the current turn.") }
@@ -432,6 +444,43 @@ class AppViewModel(application: Application) : AndroidViewModel(application), Ch
                 _chat.update { it.copy(running = false, error = e.message ?: "Couldn't send.") }
             }
         }
+    }
+
+    /**
+     * Images go up with `image.attach_bytes` (falling back to a file when
+     * Hermes refuses them as images); everything else is staged with
+     * `file.attach`, whose `@file:` reference the prompt must carry.
+     */
+    private suspend fun uploadAttachment(sessionId: String, attachment: app.hermesconduit.android.model.Attachment): String? {
+        if (attachment.isImage) {
+            try {
+                hermes.rpc(
+                    "image.attach_bytes",
+                    buildJsonObject {
+                        put("session_id", sessionId)
+                        put("content_base64", attachment.base64)
+                        put("filename", attachment.name)
+                    },
+                    120_000,
+                )
+                return null
+            } catch (e: app.hermesconduit.android.net.RpcException) {
+                if (e.code != 4016 && e.code != 4018) throw e
+            }
+        }
+        val result = hermes.rpc(
+            "file.attach",
+            buildJsonObject {
+                put("session_id", sessionId)
+                put("data_url", attachment.dataUrl)
+                put("name", attachment.name)
+                put("path", "")
+            },
+            120_000,
+        ).obj
+        result?.get("ref_text").str?.trim()?.takeIf { it.startsWith("@file:") && it.length > 6 }?.let { return it }
+        val path = (result?.get("ref_path").str ?: result?.get("path").str)?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+        return "@file:" + app.hermesconduit.android.model.Attachment.formatReferenceValue(path)
     }
 
     override fun stop() {
