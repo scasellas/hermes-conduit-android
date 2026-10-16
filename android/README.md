@@ -2,44 +2,23 @@
 
 A native Android client for [Hermes Agent](https://github.com/NousResearch/hermes-agent), ported from the iOS app in this repository. It is written in Kotlin with Jetpack Compose and talks to the same self-hosted Hermes dashboard. There is no relay and no extra server-side setup.
 
-> **Status: early port.** The core chat experience works. The many iOS-only surfaces (see below) have not been ported yet.
+> **Status:** a native port of the iOS app, built feature area by feature area against the same Hermes dashboard protocol. `docs/IOS_FEATURE_INVENTORY.md` lists every iOS feature; `docs/PORTING.md` describes the architecture.
 
 ## What's included
 
-- **Sign-in**
-  - Dashboard address with password sign-in.
-  - Optional Cloudflare Access service token.
-  - Credentials and the session cookie are stored in Keystore-backed encrypted preferences.
-  - Plain HTTP follows the iOS policy: it is allowed only for localhost, private LAN (RFC1918) and Tailscale (`*.ts.net`, `100.64.0.0/10`).
-- **Chats**
-  - The session list for the active profile, with pinned chats first.
-  - A refresh button to reload the list.
-  - Rename, pin, archive and delete, using the dashboard's mutation-identity protocol.
-- **Profiles:** switch between Hermes profiles.
-- **Streaming chat**
-  - Live Markdown responses, reasoning traces and tool-call cards with inputs and outputs.
-  - Stop a running turn. A message sent while a turn runs is steered or queued, as the gateway decides.
-  - "Load earlier" pages back through long transcripts.
-- **Decisions**
-  - Inline approval cards: allow once, for the chat, always, or deny.
-  - Clarify questions, including multiple-choice and batched questions.
-- **Models:** pick a provider and model for the current chat, including the gateway's expensive-model confirmation.
-- **Resilience**
-  - JSON-RPC keepalive pings.
-  - Automatic reconnect with backoff and a fresh single-use ticket.
-  - Silent re-login with the saved password when the dashboard session expires.
-- **Layout:** phones and tablets. On wide screens the chat list stays docked.
+| Area | Highlights |
+|---|---|
+| **Sign-in and dashboards** | Password and native OAuth (PKCE, browser), Cloudflare Access service token, extra headers, multiple saved dashboards, connection test with the iOS failure explanations, biometric/screen-lock app lock |
+| **Chats** | Search (titles plus Hermes full-text), filters (unread, needs approval, running, voice, scheduled, per source), live status badges, unread state, pins, archive, nesting, projects (create, folders, move), automatic titles, offline copy |
+| **Conversation** | Streaming Markdown with highlighted code, tables, Mermaid and KaTeX, `MEDIA:` files and `::preview` pages, reasoning and tool cards, copy/quote/branch/react, timestamps, slash commands, compression, context breakdown, delegate agents, reasoning effort, fast mode, per-chat YOLO, model picker, steer/interrupt, attachments (camera, photos, files, shares), drafts, full-screen editor |
+| **Decisions** | Approvals, clarify questions, masked sudo/secret/vault prompts, chat takeover from Desktop or the terminal, presented confirm panels (with maps navigation), Let Hermes change settings |
+| **Hermes features** | Bot Mode and group chats, Kanban, Capabilities (skills, tools, MCP connectors, plugins), scheduled jobs, artifacts, workspace browser, gateway diagnostics, logs and restart, Conduit plugin install/update |
+| **Settings** | Profile config pages (Chat, Workspace & safety, Memory & delegation, Model defaults), profiles manager (order, photos, background glow), appearance (language, theme, app icon), notifications, saved dashboards, connection log, about |
+| **Notifications** | Background gateway connection (the push relay is APNs-only) with approval/input/response/failure/background-task notifications, Allow/Deny and Reply actions, live progress notification |
+| **Platform** | `conduit://` links, share target, “Ask Hermes” text action, launcher shortcuts, Quick Settings tile, home-screen widgets, digital assistant “Ask Hermes about screen”, Android Auto and Wear OS replies through messaging notifications |
+| **Languages** | The 14 iOS languages, from the iOS String Catalogs |
 
-## Not yet ported from iOS
-
-- Voice: push-to-talk, GPT-Live, Gemini Live and Grok Live.
-- Push notifications. These need an FCM path in the notifier relay.
-- Native OAuth (PKCE) sign-in. Dashboards that only offer browser sign-in show an explanatory error.
-- Attachments.
-- Bot Mode, group chats, Kanban, the Capabilities tab, scheduled jobs, gateway logs and restart.
-- Multiple saved dashboards, biometric lock, widgets and localization.
-
-The CarPlay, Apple Watch, Live Activities, HealthKit and Siri Shortcuts features have Android counterparts (Android Auto, Wear OS, ongoing notifications, Health Connect, App Actions), but each of those is a project of its own.
+Voice, live voice providers, Calls from Hermes, wake phrase, device data (Health Connect, location, calendar & phone) and the Wear OS app are ported in follow-up changes; see the inventory for their status.
 
 ## Building
 
