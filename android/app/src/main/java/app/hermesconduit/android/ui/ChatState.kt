@@ -38,9 +38,34 @@ data class ChatState(
     /** Text to place in the composer (quote, slash prefill); consumed by the composer. */
     val prefill: String? = null,
     val compacting: Boolean = false,
+    val takeover: TakeoverState? = null,
     val notice: String? = null,
     val error: String? = null,
 )
+
+/** A send refused because another Hermes surface owns the chat (`SESSION_NOT_OWNED`). */
+data class TakeoverState(
+    val sessionIds: List<String>,
+    val surface: String?,
+    val refusedText: String,
+    /** offered | waiting | failed | unavailable */
+    val phase: String = "offered",
+    val message: String? = null,
+) {
+    val owner: String get() = when (surface?.lowercase()) { "desktop" -> "desktop"; "cli", "tui" -> "terminal"; else -> "other" }
+
+    companion object {
+        /** `Details: session <id> opened by <surface>.` in the refusal message. */
+        fun details(message: String): Pair<String?, String?> {
+            val index = message.indexOf("Details: session ")
+            if (index < 0) return null to null
+            val words = message.substring(index + "Details: session ".length).split(' ', '\n').filter { it.isNotEmpty() }
+            val id = words.firstOrNull()
+            if (words.size < 4 || words[1] != "opened" || words[2] != "by") return id to null
+            return id to words[3].removeSuffix(".").ifEmpty { null }
+        }
+    }
+}
 
 /** A model switch the gateway wants confirmed (`confirm_required`). */
 data class ModelConfirm(val provider: String, val model: String, val message: String)

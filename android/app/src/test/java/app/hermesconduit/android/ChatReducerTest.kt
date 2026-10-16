@@ -54,3 +54,13 @@ class ChatReducerTest {
         assertNull(state.clarify)
     }
 }
+
+class TakeoverTest {
+    @org.junit.Test
+    fun parsesRefusalDetails() {
+        val (id, surface) = app.hermesconduit.android.ui.TakeoverState.details("Session not owned. Details: session abc123 opened by desktop.")
+        org.junit.Assert.assertEquals("abc123", id)
+        org.junit.Assert.assertEquals("desktop", surface)
+        org.junit.Assert.assertEquals(null to null, app.hermesconduit.android.ui.TakeoverState.details("nope"))
+    }
+}

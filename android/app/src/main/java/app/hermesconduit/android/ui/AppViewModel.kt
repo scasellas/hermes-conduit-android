@@ -941,11 +941,62 @@ class AppViewModel(application: Application) : AndroidViewModel(application), Ch
                     "queued" -> _chat.update { it.copy(notice = "Queued — Hermes will answer after the current turn.") }
                     "steered" -> _chat.update { it.copy(notice = "Sent as guidance for the running turn.") }
                 }
+            } catch (e: app.hermesconduit.android.net.RpcException) {
+                if (e.reason == "SESSION_NOT_OWNED" || e.message?.contains("SESSION_NOT_OWNED") == true) {
+                    val (id, surface) = TakeoverState.details(e.message.orEmpty())
+                    val ids = listOfNotNull(id, _chat.value.sessionId, _chat.value.runtimeId).distinct()
+                    _chat.update { c -> c.copy(running = false, messages = c.messages.filterNot { it.id == local.id }, takeover = TakeoverState(ids, surface, trimmed)) }
+                    if (settings.getBool(AppSettings.AUTO_TAKEOVER, false)) takeOver()
+                } else {
+                    _chat.update { it.copy(running = false, error = e.message ?: "Couldn't send.") }
+                }
             } catch (e: Exception) {
                 _chat.update { it.copy(running = false, error = e.message ?: "Couldn't send.") }
             }
         }
     }
+
+    /** POST the plugin's sessions/takeover, then resend what was refused. */
+    override fun takeOver() {
+        val state = _chat.value.takeover ?: return
+        _chat.update { it.copy(takeover = state.copy(phase = "waiting")) }
+        viewModelScope.launch {
+            try {
+                val profile = hermes.profile.value.takeIf { it != "default" }
+                val response = hermes.rest {
+                    it.sendJson(
+                        "POST", "api/plugins/conduit_push/sessions/takeover",
+                        buildJsonObject { put("session_ids", kotlinx.serialization.json.buildJsonArray { state.sessionIds.take(4).forEach { id -> add(kotlinx.serialization.json.JsonPrimitive(id)) } }) },
+                        mapOf("profile" to profile),
+                    )
+                }
+                if (response["ok"].bool != true) error("malformed")
+                when (response["status"].str) {
+                    "taken_over", "free" -> {
+                        _chat.update { it.copy(takeover = null) }
+                        _chat.value.sessionId?.let { resume(it, reloadHistory = false) }
+                        if (state.refusedText.isNotBlank()) send(state.refusedText, emptyList(), null)
+                    }
+                    "busy" -> _chat.update { it.copy(takeover = state.copy(phase = "failed", message = takeoverBusy(state))) }
+                    "same_host" -> _chat.update { it.copy(takeover = state.copy(phase = "unavailable", message = L10n.tr("This chat is open on the same computer as Hermes. Close it there to send from here."))) }
+                    else -> error("malformed")
+                }
+            } catch (e: app.hermesconduit.android.net.DashboardHttpException) {
+                val message = if (e.code == 404 || e.code == 405) L10n.tr("Taking over chats needs a newer Conduit plugin on this Hermes.") else e.message
+                _chat.update { it.copy(takeover = state.copy(phase = "unavailable", message = message)) }
+            } catch (e: Exception) {
+                _chat.update { it.copy(takeover = state.copy(phase = "failed", message = L10n.tr("Couldn't take over this chat. Try again."))) }
+            }
+        }
+    }
+
+    private fun takeoverBusy(state: TakeoverState) = when (state.owner) {
+        "desktop" -> L10n.tr("Hermes Desktop is still replying in this chat. Try again when it finishes.")
+        "terminal" -> L10n.tr("A Hermes terminal is still replying in this chat. Try again when it finishes.")
+        else -> L10n.tr("Another Hermes window is still replying in this chat. Try again when it finishes.")
+    }
+
+    override fun dismissTakeover() = _chat.update { it.copy(takeover = null) }
 
     /**
      * Images go up with `image.attach_bytes` (falling back to a file when

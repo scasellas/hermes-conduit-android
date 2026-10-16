@@ -116,6 +116,8 @@ interface ChatActions {
     fun setYolo(enabled: Boolean) {}
     fun respondInputPrompt(value: String) {}
     fun refreshChat() {}
+    fun takeOver() {}
+    fun dismissTakeover() {}
     fun renameCurrent(title: String) {}
     fun archiveCurrent() {}
     fun deleteCurrent() {}
@@ -220,6 +222,7 @@ fun ChatContent(
             chat.approval?.let { ApprovalCard(it, onChoice = actions::respondApproval) }
             chat.clarify?.let { ClarifyCard(it, onAnswer = { answers -> actions.answerClarify(it, answers) }) }
             chat.inputPrompt?.let { InputPromptCard(it, actions::respondInputPrompt) }
+            chat.takeover?.let { TakeoverBanner(it, actions) }
             Composer(
                 chat = chat,
                 enabled = link == LinkState.CONNECTED,
@@ -524,6 +527,30 @@ private fun ConversationMenu(chat: ChatState, actions: ChatActions) {
             confirmButton = { TextButton(onClick = { deleting = false; actions.deleteCurrent() }) { Text(t("Delete"), color = MaterialTheme.colorScheme.error) } },
             dismissButton = { TextButton(onClick = { deleting = false }) { Text(t("Cancel")) } },
         )
+    }
+}
+
+@Composable
+private fun TakeoverBanner(state: TakeoverState, actions: ChatActions) {
+    DecisionCard {
+        val text = state.message ?: when (state.phase) {
+            "waiting" -> when (state.owner) {
+                "desktop" -> t("Taking this chat over from Hermes Desktop. If it's replying, Conduit waits for the reply to finish.")
+                "terminal" -> t("Taking this chat over from a Hermes terminal. If it's replying, Conduit waits for the reply to finish.")
+                else -> t("Taking this chat over from another Hermes window. If it's replying, Conduit waits for the reply to finish.")
+            }
+            else -> when (state.owner) {
+                "desktop" -> t("This chat is open in Hermes Desktop. Take it over to send from here.")
+                "terminal" -> t("This chat is open in a Hermes terminal. Take it over to send from here.")
+                else -> t("This chat is open in another Hermes window. Take it over to send from here.")
+            }
+        }
+        Text(text, style = MaterialTheme.typography.bodyMedium)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (state.phase == "waiting") CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+            else if (state.phase != "unavailable") Button(onClick = actions::takeOver) { Text(t("Take over this chat")) }
+            TextButton(onClick = actions::dismissTakeover) { Text(t("Not now")) }
+        }
     }
 }
 
