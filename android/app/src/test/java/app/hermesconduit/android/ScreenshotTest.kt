@@ -1,7 +1,13 @@
 package app.hermesconduit.android
 
 import app.hermesconduit.android.core.LinkState
+import androidx.activity.compose.LocalActivityResultRegistryOwner
+import androidx.activity.result.ActivityResultRegistry
+import androidx.activity.result.ActivityResultRegistryOwner
+import androidx.activity.result.contract.ActivityResultContract
 import androidx.compose.foundation.layout.Box
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.core.app.ActivityOptionsCompat
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import app.cash.paparazzi.DeviceConfig
@@ -64,7 +70,13 @@ class ScreenshotTest {
 
     @Test
     fun chat() = paparazzi.snapshot {
-        ConduitTheme(dark = true) {
+        // The composer's photo and file pickers need a result registry, which Paparazzi has no activity for.
+        val registryOwner = object : ActivityResultRegistryOwner {
+            override val activityResultRegistry = object : ActivityResultRegistry() {
+                override fun <I, O> onLaunch(requestCode: Int, contract: ActivityResultContract<I, O>, input: I, options: ActivityOptionsCompat?) = Unit
+            }
+        }
+        CompositionLocalProvider(LocalActivityResultRegistryOwner provides registryOwner) { ConduitTheme(dark = true) {
             ChatContent(
                 chat = ChatState(
                     sessionId = "s",
@@ -93,7 +105,7 @@ class ScreenshotTest {
                 showMenuButton = true,
                 onMenu = {},
             )
-        }
+        } }
     }
 
     @Test
