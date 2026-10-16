@@ -14,7 +14,30 @@ data class SessionSummary(
     /** Epoch milliseconds of the latest activity, if any. */
     val lastActiveMs: Long?,
     val source: String?,
+    /** Classified source (iOS SessionSource raw value): chat, voice, voice_job, discord, telegram, api, webhook, cron, other. */
+    val sourceKind: String = "chat",
+    val parentId: String? = null,
+    val runtimeId: String? = null,
+    /** Every id this row is known by (runtime, stored, session_key). */
+    val alternateIds: Set<String> = emptySet(),
+    val lastReadAtMs: Long? = null,
+) {
+    fun matches(id: String?) = id != null && (id == this.id || id in alternateIds)
+}
+
+data class ProjectSummary(
+    val id: String,
+    val title: String,
+    val primaryPath: String?,
+    val isHome: Boolean,
+    val isAuto: Boolean,
+    val sessionCount: Int,
+    val previewSessions: List<SessionSummary>,
 )
+
+data class ProjectLane(val id: String, val title: String, val sessions: List<SessionSummary>, val path: String?)
+
+data class SearchMatch(val sessionId: String, val title: String, val snippet: String, val lastActiveMs: Long?)
 
 enum class MessageRole { USER, ASSISTANT, SYSTEM, TOOL, REASONING }
 

@@ -197,6 +197,30 @@ class DashboardApi(
         return MessagePage(MessageNormalizer.messages(rows), hasMore = rows.size >= limit)
     }
 
+    /** Hermes' full-text search (`/api/sessions/search`): words only, as FTS5 reads punctuation as syntax. */
+    suspend fun searchSessions(query: String, profile: String, limit: Int = 20): List<app.hermesconduit.android.model.SearchMatch> {
+        val words = query.map { if (it.isLetterOrDigit()) it else ' ' }.joinToString("").split(' ').filter { it.isNotEmpty() }
+        val q = words.joinToString(" ").take(200)
+        if (q.isEmpty()) return emptyList()
+        val result = execute(
+            Request.Builder().url(url("api/sessions/search", mapOf("q" to q, "limit" to limit.toString(), "profile" to profile.takeIf { it != "default" }))).get().build(),
+        )
+        return MessageNormalizer.searchMatches(result)
+    }
+
+    suspend fun setUnread(sessionId: String, profile: String, unread: Boolean) =
+        mutate(sessionId, profile, "PATCH", buildJsonObject { put("unread", unread) })
+
+    /** Scheduled (cron) sessions, listed apart from the chats. */
+    suspend fun cronSessions(profile: String): List<SessionSummary> {
+        val query = mapOf(
+            "limit" to PAGE_SIZE.toString(), "offset" to "0", "min_messages" to "1",
+            "archived" to "exclude", "order" to "recent", "source" to "cron", "profile" to profile,
+        )
+        val result = execute(Request.Builder().url(url("api/profiles/sessions", query)).get().build())
+        return MessageNormalizer.sessions(result["sessions"].arr ?: result["_array"].arr ?: JsonArray(emptyList()))
+    }
+
     suspend fun renameSession(sessionId: String, profile: String, title: String) =
         mutate(sessionId, profile, "PATCH", buildJsonObject { put("title", title) })
 

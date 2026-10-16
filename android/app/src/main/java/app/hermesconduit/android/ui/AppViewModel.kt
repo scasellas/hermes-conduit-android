@@ -48,7 +48,42 @@ data class SessionsState(
     val sessions: List<SessionSummary> = emptyList(),
     val loading: Boolean = false,
     val error: String? = null,
-)
+    /** "all", "unread", "needsApproval", "running", "voice", "scheduled" or "source.<kind>". */
+    val filter: String = "all",
+    val query: String = "",
+    val searchResults: List<app.hermesconduit.android.model.SearchMatch>? = null,
+    val searching: Boolean = false,
+    /** Live status by any session id: "working", "waiting", "starting", "idle". */
+    val liveStatus: Map<String, String> = emptyMap(),
+    val needsApproval: Set<String> = emptySet(),
+    val scheduled: List<SessionSummary>? = null,
+) {
+    fun statusOf(session: SessionSummary): String? =
+        (session.alternateIds + session.id).firstNotNullOfOrNull { liveStatus[it] }
+
+    fun isRunning(session: SessionSummary) = statusOf(session).let { it == "working" || it == "waiting" }
+
+    fun needsApproval(session: SessionSummary) = (session.alternateIds + session.id).any { it in needsApproval }
+
+    val visible: List<SessionSummary>
+        get() {
+            val base = when {
+                filter == "scheduled" -> scheduled.orEmpty()
+                else -> sessions
+            }
+            val filtered = when {
+                filter == "unread" -> base.filter { it.unread }
+                filter == "needsApproval" -> base.filter { needsApproval(it) }
+                filter == "running" -> base.filter { isRunning(it) }
+                filter == "voice" -> base.filter { it.sourceKind == "voice" || it.sourceKind == "voice_job" }
+                filter.startsWith("source.") -> base.filter { it.sourceKind == filter.removePrefix("source.") }
+                else -> base
+            }
+            if (query.isBlank()) return filtered
+            val words = query.lowercase().split(' ').filter { it.isNotBlank() }
+            return filtered.filter { s -> words.all { w -> s.title.lowercase().contains(w) || s.preview?.lowercase()?.contains(w) == true } }
+        }
+}
 
 class AppViewModel(application: Application) : AndroidViewModel(application), ChatActions, DrawerActions {
     private companion object {
@@ -83,6 +118,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application), Ch
         viewModelScope.launch { hermes.events.collect(::onEvent) }
         viewModelScope.launch {
             hermes.connected.collect {
+                refreshLiveStatus()
                 // Reattach to the open chat with the new runtime, reloading the
                 // transcript since events were missed while disconnected.
                 _chat.value.sessionId?.let { resume(it, reloadHistory = true) }
@@ -238,13 +274,20 @@ class AppViewModel(application: Application) : AndroidViewModel(application), Ch
                 s.copy(sessions = s.sessions.map { if (it.id == event.storedSessionId) it.copy(title = event.title) else it })
             }
         }
+        if (event is StreamEvent.Busy || event is StreamEvent.MessageStart) viewModelScope.launch { refreshLiveStatus() }
+        if (event is StreamEvent.Approval) _sessions.update { it.copy(needsApproval = it.needsApproval + event.sessionId) }
+        if (event is StreamEvent.RequestCancelled && event.method == "approval") _sessions.update { it.copy(needsApproval = it.needsApproval - event.sessionId) }
         val chat = _chat.value
         val addressed = event.sessionId.isEmpty() || event.sessionId == chat.runtimeId ||
             (event is StreamEvent.Title && event.storedSessionId == chat.sessionId)
         if (!addressed) return
         val next = ChatReducer.reduce(chat, event)
         _chat.value = next
-        if (chat.running && !next.running) viewModelScope.launch { refreshSessions() }
+        if (chat.running && !next.running) viewModelScope.launch {
+            refreshSessions()
+            refreshLiveStatus()
+            maybeGenerateTitle(next)
+        }
     }
 
     // region Profiles and sessions
@@ -264,6 +307,65 @@ class AppViewModel(application: Application) : AndroidViewModel(application), Ch
     override fun refreshSessionsAsync() {
         viewModelScope.launch { refreshSessions() }
     }
+
+    // region Sidebar extras
+
+    private var searchJob: kotlinx.coroutines.Job? = null
+
+    override fun setSessionFilter(filter: String) {
+        _sessions.update { it.copy(filter = filter) }
+        if (filter == "scheduled" && _sessions.value.scheduled == null) {
+            viewModelScope.launch {
+                runCatching { hermes.rest { it.cronSessions(hermes.profile.value) } }
+                    .onSuccess { list -> _sessions.update { it.copy(scheduled = list) } }
+            }
+        }
+    }
+
+    /** Filters titles locally right away; Hermes' full-text search fills in older chats. */
+    override fun setSessionQuery(query: String) {
+        _sessions.update { it.copy(query = query, searchResults = if (query.isBlank()) null else it.searchResults) }
+        searchJob?.cancel()
+        if (query.trim().length < 2) return
+        searchJob = viewModelScope.launch {
+            kotlinx.coroutines.delay(350)
+            _sessions.update { it.copy(searching = true) }
+            val results = runCatching { hermes.rest { it.searchSessions(query, hermes.profile.value) } }.getOrNull()
+            _sessions.update { it.copy(searching = false, searchResults = results) }
+        }
+    }
+
+    override fun openSessionById(id: String, title: String) {
+        val known = _sessions.value.sessions.firstOrNull { it.matches(id) }
+        openSession(known ?: SessionSummary(id, title.ifEmpty { L10n.tr("Untitled chat") }, null, null, null, false, false, false, null, null, null))
+    }
+
+    override fun setUnread(session: SessionSummary, unread: Boolean) {
+        _sessions.update { s -> s.copy(sessions = s.sessions.map { if (it.id == session.id) it.copy(unread = unread) else it }) }
+        viewModelScope.launch {
+            runCatching { hermes.rest { it.setUnread(session.id, hermes.profile.value, unread) } }
+                .onFailure { e -> _sessions.update { it.copy(error = e.message) } }
+        }
+    }
+
+    override fun markAllRead() {
+        val unread = _sessions.value.sessions.filter { it.unread }
+        unread.forEach { setUnread(it, false) }
+    }
+
+    /** `session.active_list`: which chats are working or waiting right now. */
+    private suspend fun refreshLiveStatus() {
+        val result = runCatching { hermes.rpc("session.active_list", buildJsonObject {}).obj }.getOrNull() ?: return
+        val map = mutableMapOf<String, String>()
+        (result["sessions"] as? JsonArray)?.forEach { row ->
+            val o = row.obj ?: return@forEach
+            val status = o["status"].str ?: return@forEach
+            listOf("id", "session_key", "session_id", "stored_session_id").mapNotNull { o[it].str }.forEach { map[it] = status }
+        }
+        _sessions.update { it.copy(liveStatus = map) }
+    }
+
+    // endregion
 
     private suspend fun refreshSessions() {
         _sessions.update { it.copy(loading = true, error = null) }
@@ -316,11 +418,27 @@ class AppViewModel(application: Application) : AndroidViewModel(application), Ch
 
     // region Chat
 
+    /** A new chat anchored in a project folder. */
+    fun newChatIn(cwd: String, title: String? = null) {
+        _chat.value = ChatState(cwd = cwd, title = title ?: L10n.tr("New chat"), model = _chat.value.model, provider = _chat.value.provider)
+    }
+
+    /** `session.workspace.move`: project membership follows the session's folder. */
+    fun moveSessionToFolder(session: SessionSummary, cwd: String) {
+        viewModelScope.launch {
+            runCatching {
+                hermes.rpc("session.workspace.move", buildJsonObject { put("session_key", session.id); put("cwd", cwd) })
+            }.onSuccess { refreshSessions() }
+                .onFailure { e -> _sessions.update { it.copy(error = e.message) } }
+        }
+    }
+
     override fun newChat() {
         _chat.value = ChatState(model = _chat.value.model, provider = _chat.value.provider)
     }
 
     override fun openSession(session: SessionSummary) {
+        if (session.unread) setUnread(session, false)
         _chat.value = ChatState(sessionId = session.id, title = session.title, loading = true, model = session.model)
         viewModelScope.launch { resume(session.id, reloadHistory = true) }
     }
@@ -388,6 +506,54 @@ class AppViewModel(application: Application) : AndroidViewModel(application), Ch
             loadSlashCatalog()
         } catch (e: Exception) {
             _chat.update { if (it.sessionId != sessionId) it else it.copy(loading = false) }
+        }
+    }
+
+    private val titledSessions = mutableSetOf<String>()
+
+    /**
+     * After a new chat's first turn, Hermes usually titles it (session.title).
+     * When it hasn't after a moment, ask the gateway for its title, and failing
+     * that generate one with `llm.oneshot` if title generation is enabled.
+     */
+    private fun maybeGenerateTitle(chat: ChatState) {
+        val runtime = chat.runtimeId ?: return
+        val users = chat.messages.filter { it.role == MessageRole.USER }
+        val assistant = chat.messages.lastOrNull { it.role == MessageRole.ASSISTANT && it.content.isNotBlank() } ?: return
+        if (users.size != 1 || !titledSessions.add(runtime)) return
+        viewModelScope.launch {
+            kotlinx.coroutines.delay(2_500)
+            val known = _sessions.value.sessions.firstOrNull { it.matches(chat.sessionId) }
+            if (known != null && known.title != users.first().content.take(60) && known.title != L10n.tr("Untitled chat")) return@launch
+            runCatching {
+                val existing = hermes.rpc("session.title", buildJsonObject { put("session_id", runtime) }).obj?.get("title").str?.trim()
+                if (!existing.isNullOrEmpty()) {
+                    _chat.update { if (it.runtimeId == runtime) it.copy(title = existing) else it }
+                    refreshSessions()
+                    return@launch
+                }
+                val config = hermes.rest { it.getJson("api/config", mapOf("profile" to hermes.profile.value.takeIf { p -> p != "default" })) }
+                val aux = (config["config"].obj ?: config)["auxiliary"].obj?.get("title_generation").obj
+                val enabled = aux?.get("enabled").let { e -> e.bool ?: e.str?.lowercase()?.let { it !in setOf("false", "0", "off", "no") } } ?: true
+                if (!enabled) return@launch
+                val language = aux?.get("language").str?.trim().orEmpty()
+                val instruction = if (language.isEmpty()) "Write the title in the same language the user is writing in." else "Write the title in $language."
+                val generated = hermes.rpc(
+                    "llm.oneshot",
+                    buildJsonObject {
+                        put("session_id", runtime)
+                        put("task", "title_generation")
+                        put("instructions", "Generate a short, descriptive title (3-7 words) for a conversation that starts with the following exchange. The title should capture the main topic or intent. $instruction Return ONLY the title text, nothing else. No quotes, no punctuation at the end, no prefixes.")
+                        put("input", "User: ${users.first().content.take(500)}\n\nAssistant: ${assistant.content.take(500)}")
+                        put("max_tokens", 500)
+                        put("temperature", 0.3)
+                    },
+                    90_000,
+                ).obj?.get("text").str?.let(MessageNormalizer::generatedTitle) ?: return@launch
+                hermes.rpc("session.title", buildJsonObject { put("session_id", runtime); put("title", generated) })
+                _chat.update { if (it.runtimeId == runtime) it.copy(title = generated) else it }
+                refreshSessions()
+            }
         }
     }
 
@@ -686,11 +852,13 @@ class AppViewModel(application: Application) : AndroidViewModel(application), Ch
             try {
                 var runtimeId = _chat.value.runtimeId
                 if (runtimeId == null) {
+                    val cwd = _chat.value.cwd
                     val created = hermes.rpc(
                         "session.create",
                         buildJsonObject {
                             put("cols", 96)
                             put("source", "desktop")
+                            if (cwd != null) put("cwd", cwd)
                         },
                     ).obj
                     runtimeId = created?.get("session_id").str ?: error("The gateway didn't create a session.")

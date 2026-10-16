@@ -52,7 +52,105 @@ object MessageNormalizer {
             messageCount = (row["message_count"] ?: row["messageCount"]).long?.toInt(),
             lastActiveMs = activityKeys.firstNotNullOfOrNull { epochMillis(row[it]) },
             source = row.firstString("source", "origin", "platform", "handoff_platform"),
+            sourceKind = classifySource(row),
+            parentId = row.firstString("parent_session_id", "parentSessionId", "_lineage_root_id")?.takeIf { it != id },
+            runtimeId = runtimeId,
+            alternateIds = listOf("session_id", "id", "stored_session_id", "runtime_session_id", "session_key")
+                .mapNotNull { row[it].str?.takeIf(String::isNotBlank) }.toSet(),
+            lastReadAtMs = epochMillis(row["last_read_at"]),
         )
+    }
+
+    /** Port of `classifySource`: cron first, then external platforms, then the chat whitelist. */
+    fun classifySource(row: JsonObject): String {
+        val direct = listOf("source", "origin", "platform").mapNotNull { row[it].str?.lowercase()?.takeIf(String::isNotEmpty) }
+        val handoff = row["handoff_platform"].str?.lowercase().orEmpty()
+        val cronMeta = listOf("cron_job_id", "cron_run_id", "scheduled_job_id", "schedule_id").any { row[it] != null && row[it] !is kotlinx.serialization.json.JsonNull }
+        val sessionId = (row["session_id"].str ?: row["id"].str ?: "").lowercase()
+        val all = direct + listOfNotNull(handoff.takeIf { it.isNotEmpty() })
+        if (cronMeta || Regex("^(?:session[_:-])?cron[_:-]").containsMatchIn(sessionId) ||
+            all.any { it == "cron" || it == "scheduled" || it == "scheduler" || it.startsWith("cron:") || it.startsWith("cron_") || it.startsWith("scheduled:") }
+        ) return "cron"
+        fun classify(source: String) = when (source) {
+            "discord" -> "discord"
+            "telegram" -> "telegram"
+            "webhook" -> "webhook"
+            "api", "api-server", "api_server", "server" -> "api"
+            else -> null
+        }
+        (direct.firstNotNullOfOrNull(::classify) ?: classify(handoff))?.let { return it }
+        val fallback = direct.firstOrNull() ?: handoff
+        val chat = setOf("", "desktop", "gateway", "tui", "chat", "web", "dashboard", "mobile", "cli", "local", "default", "unknown")
+        return if (fallback in chat) "chat" else "other"
+    }
+
+    fun projects(payload: JsonElement?): List<ProjectSummary> {
+        val records = payload.obj?.get("projects").arr ?: payload.arr ?: return emptyList()
+        return records.mapNotNull { project(it) }
+    }
+
+    fun project(item: JsonElement?): ProjectSummary? {
+        val o = item.obj ?: return null
+        val id = o["id"].str?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+        val isHome = (o["isNoProject"] ?: o["is_no_project"]).bool ?: false
+        val previews = (o["preview_sessions"] ?: o["previewSessions"]).arr ?: JsonArray(emptyList())
+        val folder = o["folders"].arr?.firstNotNullOfOrNull { it.obj?.get("path").str?.takeIf(String::isNotBlank) }
+        val repo = if (isHome) null else o["repos"].arr?.firstNotNullOfOrNull { it.obj?.get("path").str?.takeIf(String::isNotBlank) }
+        return ProjectSummary(
+            id = id,
+            title = o.firstString("label", "name", "title") ?: "Untitled project",
+            primaryPath = o.firstString("path", "primary_path", "primaryPath") ?: folder ?: repo,
+            isHome = isHome,
+            isAuto = (o["isAuto"] ?: o["is_auto"]).bool ?: (!isHome && !id.startsWith("p_")),
+            sessionCount = ((o["session_count"] ?: o["sessionCount"]).long?.toInt()) ?: previews.size,
+            previewSessions = sessions(previews),
+        )
+    }
+
+    fun projectLanes(payload: JsonElement?): List<ProjectLane> {
+        val project = payload.obj?.get("project").obj ?: return emptyList()
+        val repos = project["repos"].arr ?: JsonArray(emptyList())
+        val lanes = mutableListOf<ProjectLane>()
+        for (repo in repos) {
+            val r = repo.obj ?: continue
+            val repoLabel = r.firstString("label", "path") ?: "Workspace"
+            for (group in r["groups"].arr ?: JsonArray(emptyList())) {
+                val g = group.obj ?: continue
+                val label = g.firstString("label", "path") ?: "Sessions"
+                val path = g.firstString("path", "cwd")
+                val list = sessions(g["sessions"].arr ?: JsonArray(emptyList()))
+                if (list.isEmpty()) continue
+                lanes += ProjectLane(g["id"].str ?: "${r.hashCode()}-$label", if (repos.size > 1) "$repoLabel · $label" else label, list, path?.takeIf { it != label })
+            }
+        }
+        if (lanes.isEmpty()) {
+            val previews = sessions((project["preview_sessions"] ?: project["previewSessions"]).arr ?: JsonArray(emptyList()))
+            if (previews.isNotEmpty()) lanes += ProjectLane("recent", "Recent", previews, null)
+        }
+        return lanes
+    }
+
+    fun searchMatches(result: JsonObject?): List<SearchMatch> {
+        val seen = mutableSetOf<String>()
+        return result?.get("results").arr?.mapNotNull { row ->
+            val o = row.obj ?: return@mapNotNull null
+            val id = (o["session_id"].str ?: o["id"].str)?.trim()?.takeIf { it.isNotEmpty() && seen.add(it) } ?: return@mapNotNull null
+            SearchMatch(
+                sessionId = id,
+                title = o["title"].str?.trim().orEmpty(),
+                snippet = o["snippet"].str.orEmpty().replace(">>>", "").replace("<<<", "").split(Regex("\\s+")).joinToString(" ").take(160),
+                lastActiveMs = epochMillis(o["last_active"]) ?: epochMillis(o["session_started"]) ?: epochMillis(o["started_at"]),
+            )
+        }.orEmpty()
+    }
+
+    /** Port of `normalizedGeneratedSessionTitle`. */
+    fun generatedTitle(value: String): String? {
+        val withoutThinking = value.replace(Regex("(?is)<think\\b[^>]*>.*?</think\\s*>"), "")
+        var title = withoutThinking.lines().firstOrNull { it.isNotBlank() }?.trim().orEmpty()
+        if (title.lowercase().startsWith("title:")) title = title.drop(6).trim()
+        title = title.trim('"', '\'', '`', ' ')
+        return title.takeIf { it.isNotEmpty() }?.take(80)
     }
 
     // endregion

@@ -49,6 +49,11 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.background
+import androidx.compose.material.icons.filled.SubdirectoryArrowRight
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Shield
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import app.hermesconduit.android.core.t
@@ -65,6 +70,7 @@ import java.util.Date
 
 @Composable
 fun MainScreen(viewModel: AppViewModel, openFeature: (String) -> Unit = {}) {
+    appViewModelMove = viewModel::moveSessionToFolder
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val wide = maxWidth >= 840.dp
         val drawerState = rememberDrawerState(DrawerValue.Closed)
@@ -111,6 +117,11 @@ interface DrawerActions {
     fun signOut()
     fun switchDashboard(id: String)
     fun addDashboard()
+    fun setSessionFilter(filter: String) {}
+    fun setSessionQuery(query: String) {}
+    fun openSessionById(id: String, title: String) {}
+    fun setUnread(session: SessionSummary, unread: Boolean) {}
+    fun markAllRead() {}
 }
 
 @Composable
@@ -196,21 +207,52 @@ fun SessionDrawerContent(
                 }
             }
         }
-        if (sessions.loading) LinearProgressIndicator(Modifier.fillMaxWidth())
+        androidx.compose.material3.OutlinedTextField(
+            value = sessions.query,
+            onValueChange = actions::setSessionQuery,
+            placeholder = { Text(t("Search")) },
+            singleLine = true,
+            leadingIcon = { Icon(Icons.Default.Search, null) },
+            trailingIcon = if (sessions.query.isNotEmpty()) ({
+                IconButton(onClick = { actions.setSessionQuery("") }) { Icon(Icons.Default.Close, t("Clear")) }
+            }) else null,
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+        )
+        Row(
+            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            val sources = sessions.sessions.map { it.sourceKind }.distinct().filter { it != "chat" }
+            (sessionFilters + sources.map { "source.$it" }).forEach { filter ->
+                androidx.compose.material3.FilterChip(
+                    selected = sessions.filter == filter,
+                    onClick = { actions.setSessionFilter(filter) },
+                    label = { Text(filterTitle(filter)) },
+                )
+            }
+        }
+        if (sessions.loading || sessions.searching) LinearProgressIndicator(Modifier.fillMaxWidth())
         sessions.error?.let {
             Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp))
         }
+        val visible = sessions.visible
+        val nested = remember(visible) { nestSessions(visible) }
         LazyColumn(Modifier.weight(1f)) {
-            if (sessions.sessions.isEmpty() && !sessions.loading) {
+            if (visible.isEmpty() && !sessions.loading) {
                 item {
                     Text(
-                        "No chats yet. Start one with +.",
+                        if (sessions.query.isBlank() && sessions.filter == "all") t("No chats yet. Start one with +.") else t("No matching chats"),
                         Modifier.padding(20.dp),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
             }
-            items(sessions.sessions, key = { it.id }) { session ->
+            if (sessions.sessions.any { it.unread } && sessions.filter in setOf("all", "unread") && sessions.query.isBlank()) {
+                item(key = "mark-all-read") {
+                    TextButton(onClick = actions::markAllRead, modifier = Modifier.padding(horizontal = 8.dp)) { Text(t("Mark all as read")) }
+                }
+            }
+            items(nested, key = { it.first.id }) { (session, depth) ->
                 SessionRow(
                     session = session,
                     selected = session.id == selectedId,
@@ -219,7 +261,25 @@ fun SessionDrawerContent(
                     onPin = { actions.togglePinned(session) },
                     onArchive = { actions.archiveSession(session.id) },
                     onDelete = { actions.deleteSession(session.id) },
+                    depth = depth,
+                    running = sessions.isRunning(session),
+                    needsApproval = sessions.needsApproval(session),
+                    onToggleUnread = { actions.setUnread(session, !session.unread) },
                 )
+            }
+            val older = sessions.searchResults.orEmpty().filter { match -> visible.none { it.matches(match.sessionId) } }
+            if (sessions.query.isNotBlank() && older.isNotEmpty()) {
+                item(key = "search-header") {
+                    Text(t("Messages"), style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(start = 20.dp, top = 12.dp, bottom = 4.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                items(older, key = { "search-" + it.sessionId }) { match ->
+                    Column(
+                        Modifier.fillMaxWidth().clickable { actions.openSessionById(match.sessionId, match.title); onPicked() }.padding(horizontal = 20.dp, vertical = 8.dp),
+                    ) {
+                        Text(match.title.ifEmpty { t("Untitled chat") }, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        if (match.snippet.isNotEmpty()) Text(match.snippet, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    }
+                }
             }
         }
         HorizontalDivider()
@@ -267,7 +327,12 @@ private fun SessionRow(
     onPin: () -> Unit,
     onArchive: () -> Unit,
     onDelete: () -> Unit,
+    depth: Int = 0,
+    running: Boolean = false,
+    needsApproval: Boolean = false,
+    onToggleUnread: () -> Unit = {},
 ) {
+    var moving by remember { mutableStateOf(false) }
     var menu by remember { mutableStateOf(false) }
     var renaming by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
@@ -279,14 +344,22 @@ private fun SessionRow(
             shape = MaterialTheme.shapes.medium,
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 8.dp, vertical = 2.dp)
+                .padding(start = (8 + depth * 16).dp, end = 8.dp, top = 2.dp, bottom = 2.dp)
                 .clip(MaterialTheme.shapes.medium)
                 .combinedClickable(onClick = onOpen, onLongClick = { menu = true }),
         ) {
             Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (session.unread) {
+                        Box(Modifier.size(8.dp).clip(androidx.compose.foundation.shape.CircleShape).background(MaterialTheme.colorScheme.primary))
+                        Spacer(Modifier.width(6.dp))
+                    }
                     if (session.pinned) {
-                        Icon(Icons.Default.PushPin, "Pinned", Modifier.size(14.dp), tint = MaterialTheme.colorScheme.primary)
+                        Icon(Icons.Default.PushPin, t("Pinned"), Modifier.size(14.dp), tint = MaterialTheme.colorScheme.primary)
+                        Spacer(Modifier.width(4.dp))
+                    }
+                    if (depth > 0) {
+                        Icon(Icons.Default.SubdirectoryArrowRight, null, Modifier.size(14.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                         Spacer(Modifier.width(4.dp))
                     }
                     Text(
@@ -297,6 +370,12 @@ private fun SessionRow(
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f),
                     )
+                    if (needsApproval) Icon(Icons.Default.Shield, t("Needs approval"), Modifier.size(16.dp), tint = app.hermesconduit.android.ui.theme.attentionColor())
+                    if (running) androidx.compose.material3.CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
+                    if (session.sourceKind != "chat") {
+                        Spacer(Modifier.width(4.dp))
+                        Text(filterTitle("source." + session.sourceKind), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                 }
                 val subtitle = listOfNotNull(
                     session.lastActiveMs?.let { DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(it)) },
@@ -308,13 +387,18 @@ private fun SessionRow(
             }
         }
         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+            DropdownMenuItem(text = { Text(if (session.unread) t("Mark as read") else t("Mark as unread")) }, onClick = { menu = false; onToggleUnread() })
             DropdownMenuItem(text = { Text("Rename") }, onClick = { menu = false; renaming = true })
             DropdownMenuItem(text = { Text(if (session.pinned) "Unpin" else "Pin") }, onClick = { menu = false; onPin() })
+            DropdownMenuItem(text = { Text(t("Move to Project…")) }, onClick = { menu = false; moving = true })
             DropdownMenuItem(text = { Text("Archive") }, onClick = { menu = false; onArchive() })
             DropdownMenuItem(text = { Text("Delete", color = MaterialTheme.colorScheme.error) }, onClick = { menu = false; confirmDelete = true })
         }
     }
 
+    if (moving) {
+        MoveToProjectDialog(onPick = { cwd -> moving = false; appViewModelMove(session, cwd) }, onDismiss = { moving = false })
+    }
     if (renaming) {
         var title by remember { mutableStateOf(session.title) }
         AlertDialog(
@@ -336,4 +420,68 @@ private fun SessionRow(
             dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Cancel") } },
         )
     }
+}
+
+val sessionFilters = listOf("all", "unread", "needsApproval", "running", "voice", "scheduled")
+
+@Composable
+fun filterTitle(filter: String): String = when (filter) {
+    "all" -> t("All")
+    "unread" -> t("Unread")
+    "needsApproval" -> t("Needs approval")
+    "running" -> t("Running")
+    "voice" -> t("Voice")
+    "scheduled" -> t("Scheduled")
+    "source.chat" -> t("Chat")
+    "source.voice" -> t("Voice")
+    "source.voice_job" -> t("Voice Jobs")
+    "source.discord" -> "Discord"
+    "source.telegram" -> "Telegram"
+    "source.api" -> "API"
+    "source.webhook" -> t("Webhook")
+    "source.cron" -> t("Cron")
+    else -> t("Other")
+}
+
+/** Children (branches, delegations) under their parent when both are listed, like iOS SessionNesting. */
+fun nestSessions(sessions: List<SessionSummary>): List<Pair<SessionSummary, Int>> {
+    val byId = sessions.associateBy { it.id }
+    val children = sessions.filter { s -> s.parentId != null && byId.containsKey(s.parentId) && s.parentId != s.id }.groupBy { it.parentId!! }
+    val childIds = children.values.flatten().map { it.id }.toSet()
+    val result = mutableListOf<Pair<SessionSummary, Int>>()
+    fun add(s: SessionSummary, depth: Int, seen: MutableSet<String>) {
+        if (!seen.add(s.id)) return
+        result += s to depth
+        children[s.id]?.forEach { add(it, minOf(depth + 1, 3), seen) }
+    }
+    val seen = mutableSetOf<String>()
+    sessions.filter { it.id !in childIds }.forEach { add(it, 0, seen) }
+    sessions.filter { it.id !in seen }.forEach { add(it, 0, seen) }
+    return result
+}
+
+private var appViewModelMove: (SessionSummary, String) -> Unit = { _, _ -> }
+
+@Composable
+private fun MoveToProjectDialog(onPick: (String) -> Unit, onDismiss: () -> Unit) {
+    val model: app.hermesconduit.android.ui.projects.ProjectsViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
+    val projects by model.projects.collectAsStateWithLifecycle()
+    androidx.compose.runtime.LaunchedEffect(Unit) { model.refresh() }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(t("Move to Project")) },
+        text = {
+            val list = projects?.filter { it.primaryPath != null && !it.isHome }
+            when {
+                list == null -> androidx.compose.material3.CircularProgressIndicator()
+                list.isEmpty() -> Text(t("No projects yet"))
+                else -> LazyColumn {
+                    items(list, key = { it.id }) { p ->
+                        Text(p.title, Modifier.fillMaxWidth().clickable { onPick(p.primaryPath!!) }.padding(vertical = 10.dp))
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text(t("Cancel")) } },
+    )
 }
