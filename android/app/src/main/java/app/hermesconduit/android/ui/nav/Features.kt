@@ -4,7 +4,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Extension
-import androidx.compose.material.icons.filled.Extension
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Router
@@ -20,6 +19,9 @@ import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.vector.ImageVector
 import app.hermesconduit.android.ui.capabilities.CapabilitiesScreen
+import androidx.compose.material.icons.filled.ViewKanban
+import app.hermesconduit.android.ui.kanban.KanbanBoardScreen
+import app.hermesconduit.android.ui.kanban.kanbanSubFeatures
 import app.hermesconduit.android.ui.settings.SettingsScreen
 
 /**
@@ -56,6 +58,8 @@ val features: List<Feature> = listOf(
     Feature("settings.plugin", "Conduit plugin", Icons.Default.Extension, inDrawer = false) { back, nav -> app.hermesconduit.android.ui.plugin.PluginScreen(back, nav) },
     Feature("artifacts", "Artifacts", Icons.Default.GridView) { back, nav -> app.hermesconduit.android.ui.artifacts.ArtifactsScreen(back, nav) },
     Feature("workspace", "Workspace", Icons.Default.FolderOpen) { back, nav -> app.hermesconduit.android.ui.workspace.WorkspaceScreen(back, nav) },
+    Feature("kanban", "Kanban", Icons.Default.ViewKanban) { back, nav -> KanbanBoardScreen(back, nav) },
+    *kanbanSubFeatures(),
 )
 
 fun feature(route: String): Feature? = features.firstOrNull { it.route == route.substringBefore('/') }

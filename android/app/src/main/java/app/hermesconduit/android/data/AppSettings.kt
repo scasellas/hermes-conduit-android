@@ -68,5 +68,6 @@ class AppSettings(context: Context) {
         const val CAPABILITIES_TAB = "capabilities.tab"
         const val CAPABILITIES_SKILLS_MOST_USED = "capabilities.skills.mostUsedFirst"
         const val CAPABILITIES_TOOLS_MOST_USED = "capabilities.tools.mostUsedFirst"
+        const val KANBAN_GROUP_RUNNING = "conduit.kanbanGroupRunningByProfile"
     }
 }
