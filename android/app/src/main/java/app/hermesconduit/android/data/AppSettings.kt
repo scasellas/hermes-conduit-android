@@ -57,5 +57,8 @@ class AppSettings(context: Context) {
         const val CHAT_FONT_SCALE = "chat_font_scale"
         const val NOTIFICATIONS_ENABLED = "notifications_enabled"
         const val BACKGROUND_CONNECTION = "background_connection"
+        const val CAPABILITIES_TAB = "capabilities.tab"
+        const val CAPABILITIES_SKILLS_MOST_USED = "capabilities.skills.mostUsedFirst"
+        const val CAPABILITIES_TOOLS_MOST_USED = "capabilities.tools.mostUsedFirst"
     }
 }
