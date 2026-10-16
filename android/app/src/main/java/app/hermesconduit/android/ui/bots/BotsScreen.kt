@@ -1,5 +1,6 @@
 package app.hermesconduit.android.ui.bots
 
+import app.hermesconduit.android.ui.LocalRouteArg
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -106,7 +107,7 @@ fun BotsScreen(onBack: () -> Unit, navigate: (String) -> Unit, model: BotsViewMo
 
     LaunchedEffect(Unit) { model.refresh() }
     // conduit://bot/<profile> opens that bot's Bot Chat once the roster knows it.
-    val linked = app.hermesconduit.android.ui.LocalRouteArg.current
+    val linked: String? = LocalRouteArg.current
     var linkHandled by remember { mutableStateOf(false) }
     LaunchedEffect(linked, bots) {
         val bot = linked?.let { name -> bots.firstOrNull { it.name.equals(name, ignoreCase = true) } } ?: return@LaunchedEffect
