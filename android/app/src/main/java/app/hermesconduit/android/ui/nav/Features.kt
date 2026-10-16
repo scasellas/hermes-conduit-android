@@ -53,6 +53,7 @@ val features: List<Feature> = listOf(
     Feature("settings.chat", "Chat", Icons.Default.Chat, inDrawer = false, section = "Hermes") { back, _ -> app.hermesconduit.android.ui.settings.ChatSettingsPage(back) },
     Feature("settings.memory", "Memory & delegation", Icons.Default.Psychology, inDrawer = false, section = "Hermes") { back, _ -> app.hermesconduit.android.ui.settings.MemorySettingsPage(back) },
     Feature("settings.profiles", "Profiles", Icons.Default.Person, inDrawer = false, section = "App") { back, _ -> app.hermesconduit.android.ui.settings.ProfilesPage(back) },
+    Feature("settings.capabilities", "Capabilities", Icons.Default.Extension, inDrawer = false, section = "Hermes") { back, _ -> CapabilitiesScreen(back) },
     Feature("settings.agent", "Let Hermes change settings", Icons.Default.Info, inDrawer = false, section = "App") { back, _ -> app.hermesconduit.android.ui.agentsettings.AgentSettingsPage(back) },
     Feature("settings.dashboards", "Saved Dashboards", Icons.Default.Info, inDrawer = false, section = "Server") { back, nav -> app.hermesconduit.android.ui.settings.SavedDashboardsPage(back, nav) },
     Feature("settings.notifications", "Notifications", Icons.Default.Notifications, inDrawer = false, section = "App") { back, _ -> app.hermesconduit.android.notify.NotificationSettingsPage(back) },
