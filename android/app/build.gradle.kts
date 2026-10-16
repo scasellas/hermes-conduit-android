@@ -60,6 +60,13 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
     implementation("com.mikepenz:multiplatform-markdown-renderer-m3:0.33.0")
     implementation("com.mikepenz:multiplatform-markdown-renderer-code:0.33.0")
+    // Health, calendar & phone, location sharing (Settings > On this device). Health Connect
+    // 1.1.0 stable needs compileSdk 36; alpha12 is the last that builds against 35.
+    implementation("androidx.health.connect:connect-client:1.1.0-alpha12")
+    implementation("com.google.android.gms:play-services-location:21.3.0")
+    implementation("androidx.work:work-runtime-ktx:2.10.1")
+    // X25519, HKDF and ChaCha20-Poly1305 for the sealed uploads (already pulled in by security-crypto).
+    implementation("com.google.crypto.tink:tink-android:1.8.0")
     debugImplementation("androidx.compose.ui:ui-tooling")
 
     testImplementation("junit:junit:4.13.2")
