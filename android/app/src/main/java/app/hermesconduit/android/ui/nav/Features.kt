@@ -16,6 +16,8 @@ import androidx.compose.material.icons.filled.Chat
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.SmartToy
+import androidx.compose.material.icons.filled.Groups
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.vector.ImageVector
 import app.hermesconduit.android.ui.capabilities.CapabilitiesScreen
@@ -63,6 +65,9 @@ val features: List<Feature> = listOf(
     Feature("workspace", "Workspace", Icons.Default.FolderOpen) { back, nav -> app.hermesconduit.android.ui.workspace.WorkspaceScreen(back, nav) },
     Feature("kanban", "Kanban", Icons.Default.ViewKanban) { back, nav -> KanbanBoardScreen(back, nav) },
     *kanbanSubFeatures(),
+    Feature("bots", "Bots", Icons.Default.SmartToy) { back, nav -> app.hermesconduit.android.ui.bots.BotsScreen(back, nav) },
+    Feature("groups", "Group Chats", Icons.Default.Groups) { back, nav -> app.hermesconduit.android.ui.groups.GroupsScreen(back, nav) },
+    Feature("groups.room", "Group Chat", Icons.Default.Groups, inDrawer = false) { back, _ -> app.hermesconduit.android.ui.groups.GroupRoomScreen(back) },
 )
 
 fun feature(route: String): Feature? = features.firstOrNull { it.route == route.substringBefore('/') }

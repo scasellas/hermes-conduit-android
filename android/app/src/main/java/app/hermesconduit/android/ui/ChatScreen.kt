@@ -124,6 +124,8 @@ interface ChatActions {
     fun archiveCurrent() {}
     fun deleteCurrent() {}
     fun togglePinCurrent() {}
+    /** Bots the composer's @ picker offers (Bot Mode roster minus the listener). */
+    fun mentionCandidates(): List<app.hermesconduit.android.model.MentionAutocomplete.Candidate> = emptyList()
 }
 
 @Composable
