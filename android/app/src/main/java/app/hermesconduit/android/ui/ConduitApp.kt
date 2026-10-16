@@ -54,6 +54,9 @@ private fun MainNavigation(viewModel: AppViewModel) {
     val navigate: (String) -> Unit = { route ->
         if (route == "home") nav.popBackStack("home", inclusive = false) else nav.navigate(route)
     }
+    val context = LocalContext.current
+    androidx.compose.runtime.LaunchedEffect(Unit) { app.hermesconduit.android.ui.present.PresentedScreens.sync(context) }
+    app.hermesconduit.android.ui.present.PresentedConfirmHost()
     CompositionLocalProvider(LocalNavigate provides navigate) {
         NavHost(nav, startDestination = "home") {
             composable("home") { MainScreen(viewModel, openFeature = navigate) }

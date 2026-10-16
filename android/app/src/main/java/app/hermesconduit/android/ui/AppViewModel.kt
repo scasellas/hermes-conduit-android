@@ -121,6 +121,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application), Ch
         viewModelScope.launch {
             hermes.connected.collect {
                 refreshLiveStatus()
+                app.hermesconduit.android.ui.present.PresentedScreens.sync(getApplication())
                 // Reattach to the open chat with the new runtime, reloading the
                 // transcript since events were missed while disconnected.
                 _chat.value.sessionId?.let { resume(it, reloadHistory = true) }
@@ -308,6 +309,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application), Ch
         _chat.value = next
         app.hermesconduit.android.notify.ForegroundState.openSessionIds = setOfNotNull(next.sessionId, next.runtimeId)
         responseHaptics.onEvent(event)
+        if ((event is StreamEvent.ToolStart && event.name.equals("conduit_present", true)) ||
+            (event is StreamEvent.ToolComplete && event.name.equals("conduit_present", true))
+        ) app.hermesconduit.android.ui.present.PresentedScreens.sync(getApplication())
         if (chat.running && !next.running) viewModelScope.launch {
             refreshSessions()
             refreshLiveStatus()
