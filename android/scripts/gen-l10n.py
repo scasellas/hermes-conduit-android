@@ -4,8 +4,9 @@
 The iOS catalogs key every string by its English text, so the Android app
 looks strings up the same way (see L10n.kt). Swift format specifiers are
 rewritten for java.util.Formatter: %@ -> %s, %lld/%ld/%d -> %d, %1$@ -> %1$s.
-Android-only strings and their translations live in android-strings.xcstrings
-(same format) and are merged on top.
+Android-only strings and their translations live in l10n/*.tsv (one row per
+English key: key, then de es fr id it ja ko pl pt-BR ru tr zh-Hans zh-Hant)
+and are merged on top.
 """
 import json
 import os
@@ -64,6 +65,18 @@ def main():
                 if value is None:
                     continue
                 tables.setdefault(lang, {})[convert(key)] = convert(value)
+    tsv_langs = ["de", "es", "fr", "id", "it", "ja", "ko", "pl", "pt-BR", "ru", "tr", "zh-Hans", "zh-Hant"]
+    tsv_dir = os.path.join(ROOT, "l10n")
+    for name in sorted(os.listdir(tsv_dir)) if os.path.isdir(tsv_dir) else []:
+        if not name.endswith(".tsv"):
+            continue
+        with open(os.path.join(tsv_dir, name), encoding="utf-8") as f:
+            for line in f:
+                cols = line.rstrip("\n").split("\t")
+                if len(cols) != 1 + len(tsv_langs):
+                    continue
+                for lang, value in zip(tsv_langs, cols[1:]):
+                    tables.setdefault(lang, {}).setdefault(cols[0], value)
     os.makedirs(OUT, exist_ok=True)
     for lang, table in sorted(tables.items()):
         with open(os.path.join(OUT, f"{lang}.json"), "w", encoding="utf-8") as f:
