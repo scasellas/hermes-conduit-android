@@ -16,6 +16,8 @@ class CarMicrophone(private val carContext: CarContext) : ExternalMicrophone {
     /** The coordinator asks the driver for the microphone before Voice starts. */
     @SuppressLint("MissingPermission")
     override fun start() {
+        // One recording at a time: a voice mode that starts takes the car's microphone from the last one.
+        record?.let { runCatching { it.stopRecording() } }
         val audio = CarAudioRecord.create(carContext)
         audio.startRecording()
         record = audio

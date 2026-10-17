@@ -188,6 +188,18 @@ class LiveVoiceCalls(private val context: Context, private val hub: VoiceHub) {
 
     // region Controllers
 
+    /**
+     * The car's microphone while Android Auto is connected (null: the
+     * phone's). Gemini Live and Grok Live move to it at once; a GPT-Live call
+     * picks it up when it connects, since WebRTC opens its microphone then.
+     */
+    @Volatile var externalMicrophone: app.hermesconduit.android.core.audio.ExternalMicrophone? = null
+        set(value) {
+            field = value
+            geminiAudio?.externalMicrophone = value
+            grokAudio?.externalMicrophone = value
+        }
+
     private var geminiAudio: LiveVoiceAudio? = null
     private var grokAudio: LiveVoiceAudio? = null
     private var geminiCreated = false
@@ -196,7 +208,10 @@ class LiveVoiceCalls(private val context: Context, private val hub: VoiceHub) {
 
     val gemini: GeminiLiveConversationController by lazy {
         geminiCreated = true
-        val audio = LiveVoiceAudio(context, scope, talkOver).also { geminiAudio = it }
+        val audio = LiveVoiceAudio(context, scope, talkOver).also {
+            it.externalMicrophone = externalMicrophone
+            geminiAudio = it
+        }
         GeminiLiveConversationController(
             scope = scope,
             makeSession = {
@@ -235,7 +250,10 @@ class LiveVoiceCalls(private val context: Context, private val hub: VoiceHub) {
     /** Grok Live runs on Gemini Live's conversation controller: only the session (xAI's events over the host's relay) differs. */
     val grok: GeminiLiveConversationController by lazy {
         grokCreated = true
-        val audio = LiveVoiceAudio(context, scope, talkOver).also { grokAudio = it }
+        val audio = LiveVoiceAudio(context, scope, talkOver).also {
+            it.externalMicrophone = externalMicrophone
+            grokAudio = it
+        }
         GeminiLiveConversationController(
             scope = scope,
             makeSession = {
@@ -287,7 +305,7 @@ class LiveVoiceCalls(private val context: Context, private val hub: VoiceHub) {
                     // A call Hermes made opens with its brief instead (#449), spoken first rather than waiting for the user.
                     greeting = if (liveHermesCall == null) style().greeting else null,
                     callOpening = liveHermesCall != null,
-                    makePeer = { WebRtcGPTLivePeer(context, scope) },
+                    makePeer = { WebRtcGPTLivePeer(context, scope, externalMicrophone) },
                 )
             },
             availability = {
@@ -418,15 +436,19 @@ class LiveVoiceCalls(private val context: Context, private val hub: VoiceHub) {
     /**
      * Opens `mode`'s call instead of every other voice mode (with Read
      * Aloud), which are closed first so they never share the audio. A new
-     * call is attached to `thread`; a running one keeps what it had.
+     * call is attached to `thread`; a running one keeps what it had. A call
+     * the car starts ([shownOnPhone] false) opens no call screen: the phone
+     * shows it as the minimised bar, as one whose screen was left.
      */
-    fun open(mode: LiveVoiceMode, thread: VoiceThreadTarget?) {
+    fun open(mode: LiveVoiceMode, thread: VoiceThreadTarget?, shownOnPhone: Boolean = true) {
         if (!hermes.isSignedIn) return
         hub.readAloud.stop()
         if (hub.conversationOpen.value) hub.closeConversation()
         LiveVoiceMode.entries.filter { it != mode }.forEach(::stop)
         _mode.value = mode
-        _minimised.value = false
+        _minimised.value = !shownOnPhone && !screenVisible
+        // A connected car shows its voice screen before the microphone opens.
+        hub.conversationStarting()
         if (isActive(mode)) {
             // A call already running doesn't take a pending Resume Call, and a later unrelated call must not.
             pendingResume = null

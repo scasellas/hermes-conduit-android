@@ -139,6 +139,19 @@ data class SessionsState(
         }
 }
 
+/**
+ * Switches the agent (Hermes profile) from outside the phone's screens (the
+ * car's agent picker) through the app's own state when it is up, so its chat
+ * and chat list follow, as picking the profile on the phone does.
+ */
+object ProfileSwitching {
+    @Volatile internal var handler: ((String) -> Unit)? = null
+
+    fun select(hermes: HermesConnection, profile: String) {
+        handler?.invoke(profile) ?: hermes.setProfile(profile)
+    }
+}
+
 class AppViewModel(application: Application) : AndroidViewModel(application), ChatActions, DrawerActions {
     private companion object {
         const val HISTORY_PAGE = 120
@@ -170,7 +183,15 @@ class AppViewModel(application: Application) : AndroidViewModel(application), Ch
 
     val dashboardUrl: String? get() = hermes.connection.value?.baseUrl
 
+    private val switchProfile: (String) -> Unit = { name -> selectProfile(name) }
+
+    override fun onCleared() {
+        if (ProfileSwitching.handler === switchProfile) ProfileSwitching.handler = null
+        super.onCleared()
+    }
+
     init {
+        ProfileSwitching.handler = switchProfile
         viewModelScope.launch { hermes.events.collect(::onEvent) }
         viewModelScope.launch {
             hermes.connected.collect {

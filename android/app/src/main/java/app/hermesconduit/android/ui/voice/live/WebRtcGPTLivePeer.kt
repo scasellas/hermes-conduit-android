@@ -3,10 +3,14 @@ package app.hermesconduit.android.ui.voice.live
 import android.content.Context
 import android.media.AudioAttributes
 import android.media.AudioFocusRequest
+import android.media.AudioFormat
 import android.media.AudioManager
 import android.os.Build
 import android.util.Log
 import app.hermesconduit.android.core.L10n
+import app.hermesconduit.android.core.audio.ExternalMicrophone
+import app.hermesconduit.android.core.audio.ExternalMicrophoneRelay
+import app.hermesconduit.android.core.audio.Pcm
 import app.hermesconduit.android.core.live.GPTLivePeer
 import app.hermesconduit.android.core.live.GPTLiveProtocol
 import kotlinx.coroutines.CoroutineScope
@@ -38,7 +42,12 @@ import kotlin.coroutines.resumeWithException
  * pauses the call's audio rather than ending it (#376). WebRTC calls back
  * on its own threads; everything hops to [scope].
  */
-class WebRtcGPTLivePeer(private val context: Context, private val scope: CoroutineScope) : GPTLivePeer {
+class WebRtcGPTLivePeer(
+    private val context: Context,
+    private val scope: CoroutineScope,
+    /** The car's microphone while Android Auto is connected: the call hears it instead of the phone's. */
+    private val externalMicrophone: ExternalMicrophone? = null,
+) : GPTLivePeer {
     override var onMessage: ((String) -> Unit)? = null
     override var onDisconnected: (() -> Unit)? = null
     override var onConnectionInterrupted: ((Boolean) -> Unit)? = null
@@ -47,6 +56,7 @@ class WebRtcGPTLivePeer(private val context: Context, private val scope: Corouti
     private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
     private var focusRequest: AudioFocusRequest? = null
     private var audioModule: JavaAudioDeviceModule? = null
+    private var relay: ExternalMicrophoneRelay? = null
     private var factory: PeerConnectionFactory? = null
     private var connection: PeerConnection? = null
     private var channel: DataChannel? = null
@@ -59,10 +69,29 @@ class WebRtcGPTLivePeer(private val context: Context, private val scope: Corouti
 
     override suspend fun makeOffer(): String {
         initialize(context)
-        val module = JavaAudioDeviceModule.builder(context)
+        val builder = JavaAudioDeviceModule.builder(context)
             .setUseHardwareAcousticEchoCanceler(true)
             .setUseHardwareNoiseSuppressor(true)
-            .createAudioDeviceModule()
+        externalMicrophone?.let { microphone ->
+            // WebRTC keeps reading the phone's microphone for its timing; each
+            // buffer it read is replaced with the car's audio before it is sent,
+            // until the car goes away and the phone's audio carries the call on.
+            val relay = ExternalMicrophoneRelay(microphone)
+            try {
+                relay.start()
+            } catch (e: Exception) {
+                throw IOException(L10n.tr("The microphone is not available right now."))
+            }
+            this.relay = relay
+            builder.setInputSampleRate(Pcm.CAPTURE_SAMPLE_RATE)
+                .setAudioBufferCallback { buffer, audioFormat, channelCount, sampleRate, bytesRead, captureTimeNs ->
+                    if (relay.isLive && audioFormat == AudioFormat.ENCODING_PCM_16BIT && channelCount == 1 && sampleRate == Pcm.CAPTURE_SAMPLE_RATE) {
+                        relay.fill(buffer, bytesRead)
+                    }
+                    captureTimeNs
+                }
+        }
+        val module = builder.createAudioDeviceModule()
         audioModule = module
         val factory = PeerConnectionFactory.builder().setAudioDeviceModule(module).createPeerConnectionFactory()
         this.factory = factory
@@ -170,6 +199,8 @@ class WebRtcGPTLivePeer(private val context: Context, private val scope: Corouti
         factory = null
         runCatching { audioModule?.release() }
         audioModule = null
+        relay?.stop()
+        relay = null
     }
 
     // region Audio focus (#376)

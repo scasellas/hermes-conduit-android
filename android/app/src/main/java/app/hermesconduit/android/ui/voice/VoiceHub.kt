@@ -102,16 +102,64 @@ class VoiceHub private constructor(private val context: Context) {
     )
 
     /**
-     * The classic conversation records from [microphone] (the car's, while
-     * Android Auto runs it) from its next listening window; null goes back to
+     * Every voice mode records from [microphone] (the car's, while Android
+     * Auto is connected): the classic conversation and Gemini or Grok Live
+     * move to it at once, a GPT-Live call when it connects. Null goes back to
      * the phone's.
      */
     fun useExternalMicrophone(microphone: app.hermesconduit.android.core.audio.ExternalMicrophone?) {
         capture.externalMicrophone = microphone
+        liveCalls.externalMicrophone = microphone
     }
 
     /** Gemini Live, GPT-Live and Grok Live calls. */
     val liveCalls: app.hermesconduit.android.ui.voice.live.LiveVoiceCalls = app.hermesconduit.android.ui.voice.live.LiveVoiceCalls(context, this).also { it.bind(jobs) }
+
+    // region Surfaces
+
+    /*
+     * The phone's voice screen and Android Auto's voice screen are two
+     * presentations of the same conversation, never two owners (iOS
+     * `hasActiveVoiceSurface`). While the car presents Voice, the phone
+     * leaving the foreground is not a lifecycle boundary: the conversation
+     * stays live for the driver. When the car goes away with the phone in
+     * the background, the conversation is suspended as backgrounding would
+     * have.
+     */
+
+    private val _carSurfaceActive = MutableStateFlow(false)
+    /** Android Auto is connected and presents Voice. */
+    val carSurfaceActive: StateFlow<Boolean> = _carSurfaceActive
+    /** The phone's classic voice screen is in the foreground. */
+    @Volatile private var isPhoneConversationShown = false
+
+    /** Whether any surface presents Voice now: the phone's voice screen in the foreground, or the car. */
+    val hasActiveVoiceSurface: Boolean get() = isPhoneConversationShown || _carSurfaceActive.value
+
+    /** A conversation is starting (on the phone or in the car): a connected car shows its voice screen first. */
+    @Volatile var onConversationStarting: (() -> Unit)? = null
+
+    fun conversationStarting() {
+        onConversationStarting?.invoke()
+    }
+
+    fun setCarSurfaceActive(active: Boolean) {
+        if (_carSurfaceActive.value == active) return
+        _carSurfaceActive.value = active
+        if (active) {
+            // A phone conversation suspended in the background is the car's to resume now.
+            if (_conversationOpen.value) conversation.setForegroundActive(true)
+        } else if (_conversationOpen.value && !isPhoneConversationShown) {
+            suspendForBackground()
+        }
+    }
+
+    /** The car's voice screen continues or starts the conversation: it presents it in the foreground. */
+    fun onCarConversationForegrounded() {
+        conversation.setForegroundActive(true)
+    }
+
+    // endregion
 
     private val _capability = MutableStateFlow<VoiceCapabilitySnapshot?>(null)
     /** The active profile's voice capability, refreshed on connect and profile switch. */
@@ -119,6 +167,9 @@ class VoiceHub private constructor(private val context: Context) {
 
     private val _conversationOpen = MutableStateFlow(false)
     val conversationOpen: StateFlow<Boolean> = _conversationOpen
+    private val _conversationHost = MutableStateFlow<VoiceConversationHost?>(null)
+    /** The chat the open classic conversation speaks into (the phone's chat or the car's); null while none is open. */
+    val conversationHost: StateFlow<VoiceConversationHost?> = _conversationHost
 
     private val _preferencesVersion = MutableStateFlow(0)
     /** Bumped when a profile's voice preferences change. */
@@ -238,7 +289,9 @@ class VoiceHub private constructor(private val context: Context) {
         val gateway = gateway() ?: return L10n.tr("Hermes could not prepare a voice conversation.")
         // No two voice modes share the audio.
         liveCalls.close()
+        conversationStarting()
         conversation.host = host
+        _conversationHost.value = host
         conversation.setGateway(gateway)
         if (!conversation.hasLiveVoiceSession) {
             conversation.setProfilePreferences(preferences())
@@ -259,25 +312,45 @@ class VoiceHub private constructor(private val context: Context) {
         conversation.stop()
         conversation.setBackgroundListening(false)
         conversation.host = null
+        _conversationHost.value = null
         audioRoute.end()
         _conversationOpen.value = false
         VoiceConversationService.stop(context)
     }
 
-    /** The conversation screen left the foreground. */
+    /** The phone's conversation screen left the foreground. */
     fun onConversationBackgrounded() {
+        isPhoneConversationShown = false
         if (!_conversationOpen.value) return
+        // The car presents the conversation: the phone locking in the car must not take it from the driver.
+        if (_carSurfaceActive.value) return
+        suspendForBackground()
+    }
+
+    /** The phone's conversation screen came to the foreground. */
+    fun onConversationForegrounded() {
+        isPhoneConversationShown = true
+        conversation.setForegroundActive(true)
+        conversation.setBackgroundListening(false)
+    }
+
+    /**
+     * The phone's conversation screen went away with the conversation still
+     * open (Voice settings took its place, say): the conversation goes on as
+     * before, but the phone no longer presents it once the car goes away.
+     */
+    fun onConversationScreenGone() {
+        isPhoneConversationShown = false
+    }
+
+    /** No surface presents the conversation: it keeps listening locked if asked to, or releases its audio. */
+    private fun suspendForBackground() {
         if (preferences().keepListeningWhenLocked == true && conversation.isConversationRunning) {
             conversation.setBackgroundListening(true)
         } else {
             conversation.setForegroundActive(false)
             conversation.suspendRuntimeForLifecycle()
         }
-    }
-
-    fun onConversationForegrounded() {
-        conversation.setForegroundActive(true)
-        conversation.setBackgroundListening(false)
     }
 
     // endregion
