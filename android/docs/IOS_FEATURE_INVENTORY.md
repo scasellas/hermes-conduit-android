@@ -500,6 +500,11 @@ Files: `Views/CapabilitiesView.swift` (206), `Views/Capabilities/CapabilityCompo
   - Shared: `Shared/WatchVoice/*` (about 3.2k); `Views/LiquidOrb`.
 - **Wire:** `PLUGIN/watch-tools/grant`, `/watch-tools/revoke`, `/watch-audio/prepare`, `/watch-audio/status`; relay `v1/watch-tools/grants/{id}`, `/v1/rings/{id}/settled`.
 - **Size:** ~14k. Port last.
+- **Wear OS port (`android/wear`, phone side `app/.../watch/`, shared wire `android/wearwire`):**
+  - Bridge call only: the watch recognizes speech, sends each utterance over the Data Layer (`/conduit/voice/turn`), the phone's `WatchBridgeService` runs it with `prompt.submit` (surface `voice`, `voice_turn`) and streams the reply back (`/conduit/voice/reply`), which the watch speaks with TextToSpeech. Tap the orb to interrupt (`session.interrupt`).
+  - Home: Talk to Hermes, recent chats (continue one by voice), pending approvals (Approve once / Deny), call log, Call on open. Tile, complication, `conduitwatch://talk` and a static shortcut open straight into a call.
+  - Phone: Settings > Watch (`settings.watch`): watch status, Approve from the Watch (Tap / Tap or voice), a watch-tools grant/revoke check, call log share/clear.
+  - Not ported: direct Gemini Live on the watch and GPT-Live/Grok audio bridges (WatchDirectCallModel, WatchGeminiSocket, WatchGrokBridgeSocket, WatchDirectBroker, watch-audio runtime setup). They follow the phone's live-voice port (§6); `WatchToolGrantClient` is ported for that path. Jobs per Watch call (relay jobs) belong to the direct path too.
 
 ## 27. CarPlay (Android analog: Android Auto)
 
@@ -543,9 +548,9 @@ Files: `Views/CapabilitiesView.swift` (206), `Views/Capabilities/CapabilityCompo
 
 - **Conversation identity and session references** (durable vs runtime ids, aliases): `ConversationIdentity.swift` (160), `ConversationIdentityIndex.swift` (247), `SessionReference.swift` (288), `HermesSessionReference.swift` (222), `SessionMutationIdentity.swift` (83), `SessionRenameOperation.swift` (127). About 1.1k lines. Needed for push routing, widgets and voice.
 - **Transcript performance instrumentation:** `TranscriptPerformanceInstrumentation.swift` (558). Optional.
-- **Session list profile fan-out and secondary-profile title recovery:** AppState L24068.
-- **`approval.pending` re-hydration on resume:** `HermesClient.pendingApprovals` L2417. Android only shows live approval events.
-- **Clarify history records:** `Models/ClarifyHistoryRecord.swift` (139). Shows answered clarifies in the transcript.
+- **Session list profile fan-out and secondary-profile title recovery:** AppState L24068. Ported: `AppViewModel.maybeGenerateTitle` (session.title first, then `auxiliary.title_generation` + `llm.oneshot` + rename).
+- **`approval.pending` re-hydration on resume:** `HermesClient.pendingApprovals` L2417. Ported: `AppViewModel.resume` re-reads `approval.pending`.
+- **Clarify history records:** `Models/ClarifyHistoryRecord.swift` (139). Shows answered clarifies in the transcript. Ported: `model/ClarifyHistory.kt` + `ClarifyHistoryCard`.
 
 ---
 

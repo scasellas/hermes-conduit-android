@@ -25,7 +25,7 @@ jobs:
           java-version: "17"
       - uses: gradle/actions/setup-gradle@v4
       - name: Unit tests, screenshot checks, lint and debug APK
-        run: ./gradlew :app:testDebugUnitTest :app:verifyPaparazziDebug :app:lintDebug :app:assembleDebug --console=plain
+        run: ./gradlew :app:testDebugUnitTest :app:verifyPaparazziDebug :app:lintDebug :app:assembleDebug :wear:assembleDebug --console=plain
       - uses: actions/upload-artifact@v4
         if: always()
         with:

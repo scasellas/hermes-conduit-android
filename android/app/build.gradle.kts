@@ -36,6 +36,8 @@ android {
         compose = true
         buildConfig = true
     }
+    // The phone ↔ watch wire, shared with :wear.
+    sourceSets["main"].java.srcDir("../wearwire/src/main/kotlin")
 }
 
 dependencies {
@@ -72,6 +74,8 @@ dependencies {
     // Wake phrase: on-device keyword spotting, and unpacking the model archive (.tar.bz2).
     implementation("com.github.k2-fsa.sherpa-onnx:sherpa-onnx:v1.13.8@aar")
     implementation("org.apache.commons:commons-compress:1.27.1")
+    implementation("com.google.android.gms:play-services-wearable:19.0.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.10.2")
     debugImplementation("androidx.compose.ui:ui-tooling")
 
     testImplementation("junit:junit:4.13.2")

@@ -20,6 +20,9 @@ CATALOGS = [
     os.path.join(ROOT, "android-strings.xcstrings"),
 ]
 OUT = os.path.join(ROOT, "app", "src", "main", "assets", "l10n")
+# The Wear OS app's tables come from the iOS Watch app's catalog.
+WEAR_CATALOGS = [os.path.join(REPO, "ConduitWatch", "Localizable.xcstrings")]
+WEAR_OUT = os.path.join(ROOT, "wear", "src", "main", "assets", "l10n")
 
 SPEC = re.compile(r"%(\d+\$)?(l{0,2})([@dDuUxXfeEgGcCsS])")
 
@@ -51,8 +54,14 @@ def unit_value(loc):
 
 
 def main():
+    if "--wear" not in sys.argv[1:]:
+        generate(CATALOGS, OUT)
+    generate(WEAR_CATALOGS, WEAR_OUT)
+
+
+def generate(catalogs, out):
     tables = {}
-    for path in CATALOGS:
+    for path in catalogs:
         if not os.path.exists(path):
             continue
         with open(path, encoding="utf-8") as f:
@@ -77,9 +86,9 @@ def main():
                     continue
                 for lang, value in zip(tsv_langs, cols[1:]):
                     tables.setdefault(lang, {}).setdefault(cols[0], value)
-    os.makedirs(OUT, exist_ok=True)
+    os.makedirs(out, exist_ok=True)
     for lang, table in sorted(tables.items()):
-        with open(os.path.join(OUT, f"{lang}.json"), "w", encoding="utf-8") as f:
+        with open(os.path.join(out, f"{lang}.json"), "w", encoding="utf-8") as f:
             json.dump(table, f, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         print(f"{lang}: {len(table)} strings", file=sys.stderr)
 
