@@ -2,6 +2,7 @@ package app.hermesconduit.android.watch
 
 import android.content.Context
 import app.hermesconduit.android.appSettings
+import app.hermesconduit.android.calls.HermesCalls
 import app.hermesconduit.android.core.L10n
 import app.hermesconduit.android.core.LinkState
 import app.hermesconduit.android.hermes
@@ -85,6 +86,7 @@ class WatchBridge private constructor(context: Context) {
         profile = hermes.profile.value,
         updatedAtMs = System.currentTimeMillis(),
         voices = WatchVoiceReadiness.current(settings, WatchDirectConnection(hermes.profile.value, hermes.connection.value?.id ?: "-")),
+        callsRing = HermesCalls.get(app).callsRing,
     )
 
     /** The watch reads this DataItem whenever it runs next (iOS application context). */

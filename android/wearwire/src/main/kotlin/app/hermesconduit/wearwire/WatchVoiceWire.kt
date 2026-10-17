@@ -500,6 +500,18 @@ object WatchVoiceWire {
         data class BridgeStart(override val callId: Long, val version: Int, val engine: String, val ring: String? = null) : Message()
         /** A watch call to Grok wants its setup and the grant that opens the host's audio bridge. */
         data class GrokStart(override val callId: Long, val version: Int, val ring: String? = null) : Message()
+        /**
+         * The watch can ring with calls from Hermes (designs/hermes-calls-watch.md);
+         * queued, so it reaches a sleeping phone. On iOS [token] is the Watch's
+         * PushKit token; on Wear OS it's the watch's Data Layer node id, which
+         * the phone rings, null once the watch can't ring. [key]: iOS's handoff
+         * key, unused here (the watch's link stays up while it rings). [engine]:
+         * the voice an answered call starts with (a [WatchCallVoices] name), sent
+         * again when it changes. No call: [callId] is 0.
+         */
+        data class CallsToken(val token: String?, val key: String? = null, val engine: String? = null) : Message() {
+            override val callId: Long get() = 0
+        }
         // Phone → watch
         /** Why the phone can't serve the call, as the watch shows it. */
         data class CallRefused(override val callId: Long, val reason: String) : Message()
@@ -522,6 +534,7 @@ object WatchVoiceWire {
             is DirectGrant -> case("directGrant") { put("callID", callId); opt("carryJobsFrom", carryJobsFrom) }
             is BridgeStart -> case("bridgeStart") { put("callID", callId); put("version", version); put("engine", engine); opt("ring", ring) }
             is GrokStart -> case("grokStart") { put("callID", callId); put("version", version); opt("ring", ring) }
+            is CallsToken -> case("callsToken") { opt("token", token); opt("key", key); opt("engine", engine) }
             is CallRefused -> case("callRefused") { put("callID", callId); put("reason", reason) }
             is DirectSessionIssued -> case("directSession") { put("callID", callId); put("session", session.json()) }
             is DirectTokenIssued -> case("directTokenIssued") { put("callID", callId); put("token", token.json()) }
@@ -534,6 +547,7 @@ object WatchVoiceWire {
         companion object {
             fun from(o: JsonObject): Message? {
                 val (name, b) = o.case() ?: return null
+                if (name == "callsToken") return CallsToken(b.str("token"), b.str("key"), b.str("engine"))
                 val id = b.long("callID") ?: return null
                 return when (name) {
                     "directStart" -> DirectStart(id, b.intReq("version"), b.str("ring"))

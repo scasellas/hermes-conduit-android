@@ -305,6 +305,11 @@
                 <action android:name="com.google.android.gms.wearable.REQUEST_RECEIVED" />
                 <data android:scheme="wear" android:host="*" android:pathPrefix="/conduit/wv" />
             </intent-filter>
+            <!-- The watch's answer or decline of a call from Hermes that rang on both (WearWire.RING_SETTLE). -->
+            <intent-filter>
+                <action android:name="com.google.android.gms.wearable.REQUEST_RECEIVED" />
+                <data android:scheme="wear" android:host="*" android:pathPrefix="/conduit/ring" />
+            </intent-filter>
         </service>
         <provider
             android:name="androidx.core.content.FileProvider"

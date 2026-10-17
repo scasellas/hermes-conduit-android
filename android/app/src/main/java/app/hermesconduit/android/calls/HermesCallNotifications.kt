@@ -86,7 +86,8 @@ object HermesCallNotifications {
         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
     )
 
-    fun postRinging(context: Context, target: HermesCallTarget, callerLine: String) {
+    /** [localOnly]: the watch rings the call itself, so it isn't bridged there too. */
+    fun postRinging(context: Context, target: HermesCallTarget, callerLine: String, localOnly: Boolean = false) {
         ensureChannel(context)
         val caller = Person.Builder().setName(callerLine).setKey("hermes").setImportant(true).setBot(true).build()
         val summary = HermesCallCopy.summary(target.call.kind, target.call.title, target.call.reason)
@@ -100,6 +101,7 @@ object HermesCallNotifications {
             .setFullScreenIntent(fullScreenIntent(context, target, callerLine), true)
             .setOngoing(true)
             .setAutoCancel(false)
+            .setLocalOnly(localOnly)
             .setTimeoutAfter(HermesCalls.UNANSWERED_AFTER_MS + 5_000)
             .build()
         // Rings until answered, declined or timed out.

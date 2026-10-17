@@ -97,7 +97,9 @@ class WatchVoiceWireTest {
         assertEquals("https://relay.example.test", message.grant.relayUrl)
         assertEquals((800_000_000.5 + 978_307_200) * 1000, message.grant.expiresAtMs!!.toDouble(), 1.0)
         assertNull(message.grant.maxJobs)
-        assertNull(WatchVoiceWire.decode("""{"callsToken":{"token":"x"}}""".toByteArray()))
+        // Calls from Hermes ring the watch too: its callsToken is read (HermesRingTest).
+        assertEquals(Message.CallsToken("x"), WatchVoiceWire.decode("""{"callsToken":{"token":"x"}}""".toByteArray()))
+        assertNull(WatchVoiceWire.decode("""{"report":{"_0":"x"}}""".toByteArray()))
         assertNull(WatchVoiceWire.decode("not json".toByteArray()))
     }
 

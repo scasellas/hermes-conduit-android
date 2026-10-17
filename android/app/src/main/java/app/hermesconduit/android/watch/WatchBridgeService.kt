@@ -1,7 +1,10 @@
 package app.hermesconduit.android.watch
 
+import app.hermesconduit.android.calls.HermesCalls
 import app.hermesconduit.android.hermes
+import app.hermesconduit.wearwire.HermesRingSettleResult
 import app.hermesconduit.wearwire.WatchVoiceWire
+import app.hermesconduit.wearwire.WearMessage
 import app.hermesconduit.wearwire.WearWire
 import com.google.android.gms.tasks.Task
 import com.google.android.gms.wearable.DataEvent
@@ -17,7 +20,8 @@ import kotlinx.coroutines.tasks.asTask
 /**
  * Wakes the phone app for its Wear OS watch: messages (call turns, chats,
  * approvals) go to [WatchBridge], a live call's requests and queued messages
- * to [WatchDirectBroker], queued call log lines to the call log.
+ * to [WatchDirectBroker], a ring's settle to [HermesCalls], queued call log
+ * lines to the call log.
  */
 class WatchBridgeService : WearableListenerService() {
     override fun onMessageReceived(event: MessageEvent) {
@@ -27,6 +31,7 @@ class WatchBridgeService : WearableListenerService() {
 
     /** A watch voice call's request (iOS sendMessage with a reply handler): answered with the reply, or empty for none. */
     override fun onRequest(nodeId: String, path: String, request: ByteArray): Task<ByteArray>? {
+        if (path == WearWire.RING_SETTLE) return ringSettle(path, request)
         if (path != WatchVoiceWire.PATH) return null
         val message = WatchVoiceWire.decode(request)
         val broker = WatchDirectBroker.get(this)
@@ -39,6 +44,12 @@ class WatchBridgeService : WearableListenerService() {
             broker.handle(message, waiting = true)?.let(WatchVoiceWire::encode) ?: ByteArray(0)
         }.asTask()
     }
+
+    /** The watch answered or declined a call from Hermes that rang on both: answered with how the ring stands. */
+    private fun ringSettle(path: String, request: ByteArray): Task<ByteArray> = hermes.scope.async {
+        val settle = WearWire.decode(path, request) as? WearMessage.RingSettle ?: return@async HermesRingSettleResult.Failed.encoded()
+        HermesCalls.get(this@WatchBridgeService).watchSettled(settle).encoded()
+    }.asTask()
 
     override fun onDataChanged(events: DataEventBuffer) {
         val bridge = WatchBridge.get(this)

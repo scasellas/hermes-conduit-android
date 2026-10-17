@@ -28,6 +28,13 @@ import app.hermesconduit.android.net.DashboardHttpException
 import app.hermesconduit.android.ui.plugin.PluginStatusRepository
 import app.hermesconduit.android.ui.voice.VoiceHub
 import app.hermesconduit.android.ui.voice.VoiceLaunch
+import app.hermesconduit.android.watch.WatchBridge
+import app.hermesconduit.android.watch.WatchDirectBroker
+import app.hermesconduit.android.watch.WatchDirectConnection
+import app.hermesconduit.wearwire.HermesRingDevice
+import app.hermesconduit.wearwire.HermesRingOutcome
+import app.hermesconduit.wearwire.HermesRingSettleResult
+import app.hermesconduit.wearwire.WearMessage
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -47,7 +54,9 @@ import kotlinx.serialization.json.put
  * ([HermesCallDetector]) instead of the VoIP push relay, ring as a
  * full-screen CallStyle notification ([HermesCallNotifications]), open the
  * call's chat in classic voice when answered, and a declined or missed call
- * is reported to the host as iOS reports it. One per process.
+ * is reported to the host as iOS reports it. A call that rings here rings
+ * the Wear OS watch too ([HermesWatchRing], iOS's ring with the Apple
+ * Watch): answering or declining on either stops the other. One per process.
  */
 class HermesCalls private constructor(private val context: Context) {
     private val hermes = context.hermes
@@ -65,9 +74,16 @@ class HermesCalls private constructor(private val context: Context) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String>?) = size > 32
     }
 
-    private class Ringing(val target: HermesCallTarget, val callerName: String, var answered: Boolean = false, var unanswered: Job? = null)
+    /** [ring]: the ring it shares with the watch, when it rings there too. */
+    private class Ringing(val target: HermesCallTarget, val callerName: String, var answered: Boolean = false, var unanswered: Job? = null, var ring: String? = null)
     private var ringing: Ringing? = null
     private var started = false
+
+    private val _ringingSession = MutableStateFlow<String?>(null)
+    /** The chat of the call ringing here, if one is: the call screen closes once it stops. */
+    val ringingSession: StateFlow<String?> = _ringingSession
+
+    val watchRing = HermesWatchRing(context)
 
     private val dashboardId get() = hermes.connection.value?.id
     private fun key(profile: String = hermes.profile.value) = (dashboardId ?: "") + "|" + profile
@@ -94,6 +110,10 @@ class HermesCalls private constructor(private val context: Context) {
                 refreshStatus()
                 deliverOutcomes()
             }
+        }
+        // The watch reads whether calls ring here from the phone's context.
+        scope.launch {
+            settings.bool(RINGS_KEY, true).collect { WatchBridge.get(context).publishContext() }
         }
         scope.launch {
             while (isActive) {
@@ -149,6 +169,11 @@ class HermesCalls private constructor(private val context: Context) {
 
     val isVoiceInUse: Boolean get() = VoiceHub.peek()?.let { it.conversationOpen.value || it.liveCalls.isCallActive } == true
 
+    /** Calls ring here (for the watch, which says its own voice keeps them off it only then). */
+    val callsRing: Boolean get() = ringingWanted && HermesCallNotifications.canRing(context)
+
+    private val connection get() = WatchDirectConnection(hermes.profile.value, dashboardId ?: "-")
+
     private fun callerName(target: HermesCallTarget): String {
         val main = settings.getString(AppSettings.displayNameKey(target.dashboardID ?: dashboardId, "default"), "").ifEmpty { null }
         return HermesCallerName.name(target.profile, main)
@@ -156,7 +181,8 @@ class HermesCalls private constructor(private val context: Context) {
 
     fun incoming(target: HermesCallTarget, source: String) {
         val now = System.currentTimeMillis()
-        val busy = isVoiceInUse || ringing != null
+        // A watch call this phone serves is voice in use too.
+        val busy = isVoiceInUse || ringing != null || WatchDirectBroker.get(context).hasCall
         val plan = HermesNativeCallPlan.plan(target.sentAtMs, now, busy, replayed = false, ringingWanted = ringingWanted && HermesCallNotifications.canRing(context))
         if (ringing == null) HermesCallTrace.begin("Call received from $source: ${plan.traceLabel} (voice busy: $busy)")
         val name = callerName(target)
@@ -164,8 +190,11 @@ class HermesCalls private constructor(private val context: Context) {
             HermesNativeCallPlan.Ring -> {
                 val call = Ringing(target, name)
                 ringing = call
-                HermesCallNotifications.postRinging(context, target, HermesCallerName.line(name, target.call.title))
-                HermesCallTrace.note("Ringing")
+                _ringingSession.value = target.sessionId
+                val line = HermesCallerName.line(name, target.call.title)
+                call.ring = watchRing.ring(target, line, connection)
+                HermesCallNotifications.postRinging(context, target, line, localOnly = call.ring != null)
+                HermesCallTrace.note(if (call.ring != null) "Ringing (and on the watch)" else "Ringing")
                 call.unanswered = scope.launch {
                     delay(UNANSWERED_AFTER_MS)
                     if (ringing === call && !call.answered) finish(missed = true, declined = false)
@@ -186,13 +215,16 @@ class HermesCalls private constructor(private val context: Context) {
         }
     }
 
-    /** The ringing call ended unanswered: rang out, or declined. */
-    private fun finish(missed: Boolean, declined: Boolean) {
+    /** The ringing call ended unanswered: rang out, or declined (here, or on the watch: [elsewhere]). */
+    private fun finish(missed: Boolean, declined: Boolean, elsewhere: Boolean = false) {
         val call = ringing ?: return HermesCallNotifications.cancelRinging(context)
         ringing = null
+        _ringingSession.value = null
         call.unanswered?.cancel()
         HermesCallNotifications.cancelRinging(context)
-        HermesCallTrace.note(if (declined) "Declined" else "Call ended (unanswered)")
+        HermesCallTrace.note(if (declined) (if (elsewhere) "Declined on the Watch" else "Declined") else "Call ended (unanswered)")
+        // Declined here: the watch stops ringing too.
+        if (declined && !elsewhere) call.ring?.let { watchRing.settle(it, HermesRingOutcome.DECLINED) }
         if (missed || declined) post(HermesNativeCallPlan.Notice.MISSED, call.target, call.callerName)
         HermesNativeCallPlan.outcome(declined, call.answered, if (missed) HermesNativeCallPlan.Notice.MISSED else HermesNativeCallPlan.Notice.NONE)
             ?.let { report(it, call.target) }
@@ -200,6 +232,62 @@ class HermesCalls private constructor(private val context: Context) {
 
     /** Decline from the notification or the call screen. */
     fun decline() = finish(missed = false, declined = true)
+
+    /** The watch answered the ringing call: it stops ringing here, and nothing is reported (iOS `.elsewhere(.answered)`). */
+    private fun answeredElsewhere(call: Ringing) {
+        if (ringing !== call) return
+        ringing = null
+        _ringingSession.value = null
+        call.unanswered?.cancel()
+        HermesCallNotifications.cancelRinging(context)
+        HermesCallTrace.note("Answered on the Watch")
+    }
+
+    /**
+     * The watch answered or declined a call that rang on both (its
+     * [WearMessage.RingSettle], answered with how the ring stands). The
+     * first word stands: declined there, it leaves the same missed call and
+     * outcome a decline here does.
+     */
+    fun watchSettled(request: WearMessage.RingSettle): HermesRingSettleResult {
+        val result = watchRing.watchSettle(request)
+        val call = ringing?.takeIf { it.ring == request.id && !it.answered }
+        if (result == HermesRingSettleResult.Settled && call != null) {
+            when (request.outcome) {
+                HermesRingOutcome.ANSWERED -> answeredElsewhere(call)
+                HermesRingOutcome.DECLINED -> finish(missed = false, declined = true, elsewhere = true)
+            }
+        }
+        return result
+    }
+
+    /**
+     * The call a watch call answers (its start's `ring`), kept from its
+     * ring. A call still ringing here for it stops now: the watch's settle
+     * was lost on the way (iOS waits for the relay's stop instead).
+     */
+    fun answeredOnWatch(ringId: String): HermesCallTarget? {
+        val target = watchRing.target(ringId) ?: return null
+        ringing?.takeIf { it.ring == ringId && !it.answered }?.let { call ->
+            HermesCallTrace.note("Answered on the Watch, no settle from it")
+            watchRing.watchSettle(WearMessage.RingSettle(ringId, HermesRingDevice.WATCH, HermesRingOutcome.ANSWERED))
+            answeredElsewhere(call)
+        }
+        return target
+    }
+
+    /**
+     * What a watch call that answers a call from Hermes opens with: the news
+     * the phone's own answer gives, with the reply this phone last saw in the
+     * call's chat (iOS AppState.watchHermesCallOpening). The call tells the
+     * user how the job went, so no voice conversation announces it again.
+     */
+    fun watchOpening(target: HermesCallTarget): HermesCallOpening {
+        VoiceHub.get(context).jobs.noteCallAnswered(target.call.sessionIDs)
+        val sameDashboard = target.dashboardID == null || target.dashboardID == dashboardId
+        val result = if (sameDashboard) lastReplies[target.sessionId] ?: target.durableSessionID?.let { lastReplies[it] } else null
+        return HermesCallOpening(target.call.kind, target.call.title, result, target.call.reason, target.call.sessionIDs)
+    }
 
     /**
      * Answer (or Talk on a notice): the call stops ringing and voice opens in
@@ -212,8 +300,20 @@ class HermesCalls private constructor(private val context: Context) {
             call.answered = true
             call.unanswered?.cancel()
             ringing = null
+            _ringingSession.value = null
             HermesCallNotifications.cancelRinging(context)
             HermesCallTrace.note("Answered")
+            // The watch stops ringing; answered there first, the call is there.
+            val ring = call.ring
+            if (ring != null && watchRing.settle(ring, HermesRingOutcome.ANSWERED) is HermesRingSettleResult.AlreadySettled) {
+                HermesCallTrace.note("Answered on the Watch first")
+                return null
+            }
+        } else if (watchRing.answeredOnWatch(target.sessionId)) {
+            // The call is on the watch: the phone's own answer opens nothing.
+            HermesCallTrace.note("Answered on the Watch first")
+            HermesCallNotifications.cancelNotice(context, target)
+            return null
         } else {
             HermesCallTrace.note("Talk tapped")
         }

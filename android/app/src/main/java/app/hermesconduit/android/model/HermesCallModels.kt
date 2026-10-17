@@ -232,7 +232,7 @@ class HermesCallOpening(
             block += if (kind == HermesCallRequest.Kind.APPROVAL) "Hermes is waiting in a chat for the user's approval before it goes on"
             else "Hermes asked the user a question in a chat and is waiting for the answer"
             block += fencedReason?.let { ": $it. " } ?: ". "
-            block += "Your first words tell the user in a sentence what Hermes is waiting on. This call can't give Hermes their answer: tell them to answer in that chat in Conduit on their iPhone, and never answer it yourself. Never open with a greeting question or by asking how you can help. After that, carry on as usual."
+            block += "Your first words tell the user in a sentence what Hermes is waiting on. This call can't give Hermes their answer: tell them to answer in that chat in Conduit on their phone, and never answer it yourself. Never open with a greeting question or by asking how you can help. After that, carry on as usual."
             return block
         }
         when (kind) {
@@ -273,6 +273,9 @@ class HermesCallOpening(
     }
 
     val openingTurn: String get() = firstTurn(canAnswer = true)
+
+    /** A watch call's first turn: it can't give Hermes the user's answer (see [instructionBlock]). */
+    val watchOpeningTurn: String get() = firstTurn(canAnswer = false)
 
     private fun firstTurn(canAnswer: Boolean): String {
         if (waitsOnUser && !canAnswer) {
