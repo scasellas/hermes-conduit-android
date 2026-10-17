@@ -90,6 +90,8 @@ class WatchBridgeLiveCall(
     private var briefing: String? = null
     private var greeting: String? = null
     private var openingTurn: String? = null
+    /** The call from Hermes this call answers (its ring), so the phone opens it with what Hermes called about. */
+    private var ring: String? = null
     private var voice: String? = null
     private var relay: WatchToolRelayClient? = null
 
@@ -172,9 +174,10 @@ class WatchBridgeLiveCall(
 
     // region Controls
 
-    fun start() {
+    fun start(ring: String? = null) {
         if (callActive) return
         reset()
+        this.ring = ring
         phase = Phase.PREPARING
         publish()
         CallService.start(context)
@@ -184,7 +187,7 @@ class WatchBridgeLiveCall(
             finish(e.message ?: L10n.tr("The microphone didn't start: %s", e.javaClass.simpleName))
             return
         }
-        log.note("bridgeCallStart", mapOf("callID" to callId, "engine" to ENGINE, "reachable" to link.reachable.value))
+        log.note("bridgeCallStart", mapOf("callID" to callId, "engine" to ENGINE, "reachable" to link.reachable.value, "answersHermesCall" to (ring != null)))
         timers += scope.launch { while (callActive) { delay(100); flushUplink() } }
         timers += scope.launch { while (callActive) { delay(1_000); tick() } }
         requestSession()
@@ -289,7 +292,7 @@ class WatchBridgeLiveCall(
             while (callId == id && phase == Phase.PREPARING) {
                 sessionRequests++
                 val answer = try {
-                    link.request(Message.BridgeStart(id, WatchVoiceWire.VERSION, ENGINE), SESSION_REQUEST_TIMEOUT_MS)
+                    link.request(Message.BridgeStart(id, WatchVoiceWire.VERSION, ENGINE, ring), SESSION_REQUEST_TIMEOUT_MS)
                 } catch (e: Exception) {
                     if (callId != id || phase != Phase.PREPARING) return@launch
                     log.note("bridgeStartFailed", mapOf("error" to e.message, "reachable" to link.reachable.value, "attempt" to sessionRequests))

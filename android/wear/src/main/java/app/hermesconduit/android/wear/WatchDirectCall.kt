@@ -105,6 +105,8 @@ class WatchDirectCall(
     private var relayJobsRunning = 0
     private var grokStreams = 0
     private var openingPrompt: String? = null
+    /** The call from Hermes this call answers (its ring), so the phone opens it with what Hermes called about. */
+    private var ring: String? = null
     private var endPhrases = listOf<String>()
     private var hasSentOpening = false
     private var sessionRequests = 0
@@ -213,10 +215,11 @@ class WatchDirectCall(
 
     // region Controls
 
-    fun start(engine: Engine) {
+    fun start(engine: Engine, ring: String? = null) {
         if (callActive) return
         reset()
         this.engine = engine
+        this.ring = ring
         phase = Phase.PREPARING
         publish()
         CallService.start(context)
@@ -226,7 +229,7 @@ class WatchDirectCall(
             finish(e.message ?: L10n.tr("The microphone didn't start: %s", e.javaClass.simpleName))
             return
         }
-        log.note("directCallStart", mapOf("callID" to callId, "reachable" to link.reachable.value, "engine" to engine.name.lowercase()))
+        log.note("directCallStart", mapOf("callID" to callId, "reachable" to link.reachable.value, "engine" to engine.name.lowercase(), "answersHermesCall" to (ring != null)))
         timers += scope.launch { while (callActive) { delay(FLUSH_INTERVAL_MS); flushUplink() } }
         timers += scope.launch { while (callActive) { delay(1_000); tick() } }
         requestSession()
@@ -276,7 +279,7 @@ class WatchDirectCall(
     // region Session from the phone
 
     private fun startRequest(): Message =
-        if (engine == Engine.GROK) Message.GrokStart(callId, WatchVoiceWire.VERSION) else Message.DirectStart(callId, WatchVoiceWire.VERSION)
+        if (engine == Engine.GROK) Message.GrokStart(callId, WatchVoiceWire.VERSION, ring) else Message.DirectStart(callId, WatchVoiceWire.VERSION, ring)
 
     private fun requestSession() {
         val id = callId

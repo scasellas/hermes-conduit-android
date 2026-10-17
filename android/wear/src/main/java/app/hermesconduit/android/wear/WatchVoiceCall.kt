@@ -86,16 +86,23 @@ class WatchVoiceCall(
             WatchVoiceEngine.PHONE -> phone.state.value.isActive
         }
 
-    /** Starts a call on the chosen voice; continuing one of the phone's chats runs through the phone. */
-    fun start(source: String, chatId: String? = null, chatTitle: String? = null, engine: WatchVoiceEngine = prefs.engine.value) {
+    /** The voice a call started now talks to. */
+    val engine: WatchVoiceEngine get() = prefs.engine.value
+
+    /**
+     * Starts a call on the chosen voice; continuing one of the phone's chats
+     * runs through the phone. [ring]: the call from Hermes it answers
+     * ([HermesWatchCalls]), which only a live voice can open with.
+     */
+    fun start(source: String, chatId: String? = null, chatTitle: String? = null, engine: WatchVoiceEngine = prefs.engine.value, ring: String? = null) {
         if (isActive) return
         val chosen = if (chatId != null) WatchVoiceEngine.PHONE else engine
         dismissEnded()
         callEngine.value = chosen
         when (chosen) {
-            WatchVoiceEngine.GEMINI_LIVE -> direct.start(WatchDirectCall.Engine.GEMINI)
-            WatchVoiceEngine.GROK_LIVE -> direct.start(WatchDirectCall.Engine.GROK)
-            WatchVoiceEngine.GPT_LIVE -> bridge.start()
+            WatchVoiceEngine.GEMINI_LIVE -> direct.start(WatchDirectCall.Engine.GEMINI, ring)
+            WatchVoiceEngine.GROK_LIVE -> direct.start(WatchDirectCall.Engine.GROK, ring)
+            WatchVoiceEngine.GPT_LIVE -> bridge.start(ring)
             WatchVoiceEngine.PHONE -> phone.start(source, chatId, chatTitle)
         }
     }

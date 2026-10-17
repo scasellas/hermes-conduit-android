@@ -138,6 +138,10 @@ fun HomeScreen(onTalk: () -> Unit, navigate: (String) -> Unit) {
                 modifier = Modifier.fillMaxWidth().semantics { contentDescription = t("Voice: %s", engine.title) },
             )
         }
+        // Calls from Hermes ring the watch only while its voice can start (WatchCallVoices).
+        if (context?.callsRing == true && engine.callVoice?.let { context?.notSetUp(it) } == true) {
+            item { Footnote(t("Calls from Hermes ring only your phone until %s is set up. Voice settings in Conduit on your phone show what it needs.", engine.title)) }
+        }
         if (!reachable) item { Footnote(t("Phone not connected right now"), WatchColors.attention) }
         else if (context?.signedIn == false) item { Footnote(t("Sign in to Hermes in Conduit on your phone."), WatchColors.attention) }
         item { NavChip(t("Recent chats"), Icons.Default.Chat) { navigate("chats") } }
