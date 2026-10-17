@@ -1,6 +1,11 @@
 package app.hermesconduit.android.ui.phone
 
 import android.Manifest
+import android.app.AlarmManager
+import android.content.Intent
+import androidx.core.net.toUri
+import android.os.Build
+import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
@@ -61,6 +66,7 @@ import app.hermesconduit.android.model.PhonePerson
 import app.hermesconduit.android.model.PhoneSyncPreferences
 import app.hermesconduit.android.model.VoiceReadLog
 import app.hermesconduit.android.model.str
+import app.hermesconduit.android.notify.ConduitNotifications
 import app.hermesconduit.android.ui.components.ScreenScaffold
 import app.hermesconduit.android.ui.components.SettingsColumn
 import app.hermesconduit.android.ui.components.SettingsRow
@@ -173,6 +179,44 @@ fun PhoneSettingsScreen(onBack: () -> Unit) {
         calendarPermission.launch(asking.toTypedArray())
     }
 
+    // Alarms need exact alarms (Android 12+, a page in Settings) and notifications (Android 13+), without which nothing rings.
+    var afterAlarmAccess by remember { mutableStateOf<((Boolean) -> Unit)?>(null) }
+    val alarmSettings = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { _ ->
+        afterAlarmAccess?.invoke(engine.alarmSource.authorized)
+        afterAlarmAccess = null
+    }
+    fun openExactAlarmSettings() {
+        val opened = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && runCatching {
+            alarmSettings.launch(Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM, "package:${context.packageName}".toUri()))
+        }.isSuccess
+        if (!opened) {
+            afterAlarmAccess?.invoke(engine.alarmSource.authorized)
+            afterAlarmAccess = null
+        }
+    }
+    val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { _ ->
+        val exactAllowed = Build.VERSION.SDK_INT < Build.VERSION_CODES.S || context.getSystemService(AlarmManager::class.java).canScheduleExactAlarms()
+        if (exactAllowed) {
+            afterAlarmAccess?.invoke(engine.alarmSource.authorized)
+            afterAlarmAccess = null
+        } else {
+            openExactAlarmSettings()
+        }
+    }
+    /** Asks for what alarms need when [next] has them on; [then] hears whether they may ring. */
+    fun withAlarmAccess(next: PhoneSyncPreferences, then: (Boolean) -> Unit) {
+        if (!next.alarms || engine.alarmSource.authorized) {
+            then(true)
+            return
+        }
+        afterAlarmAccess = then
+        if (!ConduitNotifications.canPost(context)) {
+            notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+        } else {
+            openExactAlarmSettings()
+        }
+    }
+
     val contactPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickContact()) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
         PhoneContacts.person(context, uri)?.let { picked ->
@@ -262,8 +306,18 @@ fun PhoneSettingsScreen(onBack: () -> Unit) {
                 }
                 if (showsAlarms) {
                     SettingsSection(t("Alarms and timers")) {
-                        SettingsToggle(t("Let Hermes set alarms and timers"), choices.alarms, { apply(choices.withAlarms(it)) }, icon = Icons.Default.Alarm)
-                        Caption(t("They're set in your Clock app. Hermes asks each time unless new items go in without asking, and always asks before cancelling one. Hermes sees only the alarms it set."))
+                        SettingsToggle(t("Let Hermes set alarms and timers"), choices.alarms, { on ->
+                            val next = choices.withAlarms(on)
+                            if (on && preferences.isOn) {
+                                withAlarmAccess(next) { allowed ->
+                                    if (allowed) apply(next) else error = L10n.tr("Conduit isn't allowed to set alarms. Allow it in the Settings app.")
+                                }
+                            } else apply(next)
+                        }, icon = Icons.Default.Alarm)
+                        Caption(t("They ring like the Clock app's, even in Silent mode or a Focus. Hermes asks each time unless new items go in without asking, and always asks before cancelling one. Hermes sees only the alarms it set."))
+                        if (preferences.isOn && preferences.alarms && !engine.alarmSource.authorized) {
+                            WarningCaption(t("Conduit isn't allowed to set alarms. Allow it in the Settings app."))
+                        }
                     }
                 }
                 if (showsPeople) {
@@ -322,7 +376,7 @@ fun PhoneSettingsScreen(onBack: () -> Unit) {
                 Icons.Default.AutoAwesome to t("Your agent reads it when you ask, or when a task you set up needs it. Whatever it reads goes to the AI model provider your Hermes uses, under that provider's terms. If your Hermes is hosted by someone else, such as Hermes Cloud, they can read it too."),
                 Icons.Default.People to t("Events can include other people's names. Notes, attendees and email addresses stay on this phone unless you turn them on."),
                 Icons.Default.PanTool to t("Hermes can only ask for calendar changes. You approve each one unless you choose to let new items in without asking, and changes or deletions always ask."),
-                Icons.Default.Alarm to t("Alarms and timers Hermes sets go into your Clock app. People are shared only if you pick them."),
+                Icons.Default.Alarm to t("Alarms and timers Hermes sets ring even in Silent mode or a Focus. People are shared only if you pick them."),
                 Icons.Default.EventBusy to t("You can turn sharing off at any time in Settings > Calendar & phone and delete what was sent from the host."),
             ),
             onAccept = {
@@ -330,14 +384,17 @@ fun PhoneSettingsScreen(onBack: () -> Unit) {
                 working = true
                 error = null
                 withCalendarAccess(choices) {
-                    scope.launch {
-                        try {
-                            sync.turnOn(choices)
-                            choices = engine.preferences.value
-                        } catch (e: Exception) {
-                            error = SyncSupport.describe(e)
+                    // A no to alarms still turns on the rest the user agreed to.
+                    withAlarmAccess(choices) { _ ->
+                        scope.launch {
+                            try {
+                                sync.turnOn(choices)
+                                choices = engine.preferences.value
+                            } catch (e: Exception) {
+                                error = SyncSupport.describe(e)
+                            }
+                            working = false
                         }
-                        working = false
                     }
                 }
             },

@@ -23,7 +23,7 @@ Verification: JVM unit tests (protocol vectors, fake sockets, MockWebServer), Pa
 | 13 | Cron | Ported. | — |
 | 14 | Saved dashboards | Ported. | — |
 | 15 | Health | Ported on Health Connect. | Some HealthKit metrics have no Health Connect record type. |
-| 16 | Calendar & phone | Ported (CalendarContract, AlarmClock, DND for Focus). Reminders come from tasks apps with the OpenTasks provider (OpenTasks, Tasks.org). | Android has no system reminders: without such an app, reminders stay off. jtx Board's provider is for sync adapters only. Alarms can't be read back. "Phone changes" arrive on reconnect rather than by push. |
+| 16 | Calendar & phone | Ported (CalendarContract, DND for Focus). Alarms and timers are Conduit's own, as with AlarmKit: exact `setAlarmClock` alarms (exact-alarm permission on Android 12+) that ring full screen on an Alarms channel through Silent mode and Do Not Disturb, set again after a reboot, an update or a clock or time zone change, and listed back to Hermes with their state. Reminders come from tasks apps with the OpenTasks provider (OpenTasks, Tasks.org). | Android has no system reminders: without such an app, reminders stay off. jtx Board's provider is for sync adapters only. "Phone changes" arrive on reconnect rather than by push. |
 | 17 | Location and Maps | Ported (fused location, geofences, Geocoder). | iOS answers Hermes' on-demand locate through an APNs location push. Android instead sends a fresh fix the moment Hermes starts its location or maps tool in a chat on the socket. Maps “Go” confirmations open Maps by themselves from the chat on screen, as on iOS. No on-device routing. |
 | 18 | Bot Mode | Ported. | — |
 | 19 | Group chats | Ported. | — |

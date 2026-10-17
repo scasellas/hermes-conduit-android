@@ -2,7 +2,6 @@ package app.hermesconduit.android.model
 
 import app.hermesconduit.android.core.L10n
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -535,29 +534,6 @@ data class PhonePerson(
 
         fun encodeAll(list: List<PhonePerson>): String =
             ConduitJson.encodeToString(kotlinx.serialization.builtins.ListSerializer(serializer()), list.take(MAXIMUM))
-    }
-}
-
-/** What Conduit remembers about each alarm or timer it set (Android can't list them back). */
-@Serializable
-data class PhoneAlarmRecord(
-    val kind: String,
-    val label: String? = null,
-    val repeats: List<String>? = null,
-    /** A one-off alarm's or timer's ring time (epoch ms). */
-    val firesAt: Long? = null,
-    val time: PhoneClockTime? = null,
-    val setAt: Long = 0,
-) {
-    companion object {
-        const val STORAGE_KEY = "conduit.phoneSync.alarms.v1"
-        const val MAXIMUM = 50
-        private val mapSerializer = kotlinx.serialization.builtins.MapSerializer(String.serializer(), serializer())
-
-        fun decodeAll(text: String?): Map<String, PhoneAlarmRecord> =
-            text?.let { runCatching { ConduitJson.decodeFromString(mapSerializer, it) }.getOrNull() }.orEmpty()
-
-        fun encodeAll(map: Map<String, PhoneAlarmRecord>): String = ConduitJson.encodeToString(mapSerializer, map)
     }
 }
 

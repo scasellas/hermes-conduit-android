@@ -16,13 +16,9 @@ import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.os.BatteryManager
 import android.os.PowerManager
-import android.provider.AlarmClock
 import android.provider.CalendarContract
 import androidx.core.content.ContextCompat
-import app.hermesconduit.android.appSettings
 import app.hermesconduit.android.core.L10n
-import app.hermesconduit.android.model.PhoneAlarmRecord
-import app.hermesconduit.android.model.PhoneAlarmRules
 import app.hermesconduit.android.model.PhoneCalendarAccess
 import app.hermesconduit.android.model.PhoneChange
 import app.hermesconduit.android.model.PhoneChangeKind
@@ -476,124 +472,4 @@ class AndroidPhoneStatusSource(private val context: Context) : PhoneStatusSource
 
     /** Do Not Disturb stands in for iOS Focus, through the user's "Tell Hermes" filters ([PhoneModes]). */
     override fun focus(): PhoneFocusSnapshot? = runCatching { PhoneModes.snapshot(context) }.getOrNull()
-}
-
-/**
- * Alarms and timers Hermes sets, through the Clock app's AlarmClock
- * intents (iOS PhoneAlarmSource with AlarmKit). Android can't list alarms
- * back, so Conduit remembers the ones it set: a one-off goes from the list
- * once its time has passed.
- */
-class AlarmClockSource(private val context: Context) : PhoneAlarmSource {
-    private val settings = context.appSettings
-
-    override val isSupported: Boolean
-        get() = Intent(AlarmClock.ACTION_SET_ALARM).resolveActivity(context.packageManager) != null
-
-    override val authorized: Boolean get() = isSupported
-
-    private fun records(): Map<String, PhoneAlarmRecord> = PhoneAlarmRecord.decodeAll(settings.getString(PhoneAlarmRecord.STORAGE_KEY, "").ifEmpty { null })
-    private fun save(records: Map<String, PhoneAlarmRecord>) = settings.set(PhoneAlarmRecord.STORAGE_KEY, if (records.isEmpty()) "" else PhoneAlarmRecord.encodeAll(records))
-
-    override fun alarms(now: Instant, zone: ZoneId): List<JsonObject>? {
-        if (!authorized) return emptyList()
-        val all = records()
-        // Forget the ones that rang and went.
-        val live = all.filter { (_, record) -> record.repeats != null || (record.firesAt ?: Long.MAX_VALUE) > now.toEpochMilli() }
-        if (live.size != all.size) save(live)
-        return live.entries.sortedBy { it.value.setAt }.take(PhoneAlarmRecord.MAXIMUM).map { (id, record) ->
-            buildJsonObject {
-                put("id", id)
-                put("kind", record.kind)
-                record.label?.let { put("label", it) }
-                val ring = record.firesAt?.let(Instant::ofEpochMilli) ?: record.time?.let { PhoneAlarmRules.nextRing(it, record.repeats, now, zone) }
-                ring?.let { put("fires_at", PhoneDates.format(it, zone)) }
-                record.repeats?.let { days -> put("repeats", JsonArray(days.map(::JsonPrimitive))) }
-                put("state", "scheduled")
-            }
-        }
-    }
-
-    override suspend fun apply(change: PhoneChange, now: Instant): String {
-        if (!authorized) throw PhoneSourceException(L10n.tr("Conduit isn't allowed to set alarms. Allow it in the Settings app."))
-        val fields = change.fields
-        val id = java.util.UUID.randomUUID().toString().lowercase()
-        when (change.kind) {
-            PhoneChangeKind.CANCEL_ALARM -> {
-                val target = change.alarmID?.lowercase().orEmpty()
-                cancel(target)
-                return target
-            }
-            PhoneChangeKind.SET_TIMER -> {
-                val seconds = fields.seconds?.takeIf { it in 5..86_400 } ?: throw PhoneSourceException(L10n.tr("That alarm isn't on this phone any more."))
-                start(Intent(AlarmClock.ACTION_SET_TIMER).apply {
-                    putExtra(AlarmClock.EXTRA_LENGTH, seconds)
-                    putExtra(AlarmClock.EXTRA_MESSAGE, fields.label ?: L10n.tr("Timer"))
-                    putExtra(AlarmClock.EXTRA_SKIP_UI, true)
-                })
-                remember(id, PhoneAlarmRecord("timer", fields.label, firesAt = now.plusSeconds(seconds.toLong()).toEpochMilli(), setAt = now.toEpochMilli()))
-            }
-            PhoneChangeKind.SET_ALARM -> {
-                val zone = ZoneId.systemDefault()
-                val at = fields.at
-                val time = fields.time
-                val local = when {
-                    at != null -> {
-                        if (at <= now) throw PhoneSourceException(L10n.tr("That alarm time has already passed."))
-                        // The Clock app takes a time of day; within a day it rings at the right moment.
-                        if (at.toEpochMilli() - now.toEpochMilli() > 24L * 3600 * 1000) {
-                            throw PhoneSourceException(L10n.tr("The Clock app sets alarms for the next 24 hours only; ask again closer to the day."))
-                        }
-                        at.atZone(zone).toLocalTime()
-                    }
-                    time != null -> java.time.LocalTime.of(time.hour, time.minute)
-                    else -> throw PhoneSourceException(L10n.tr("That alarm isn't on this phone any more."))
-                }
-                start(Intent(AlarmClock.ACTION_SET_ALARM).apply {
-                    putExtra(AlarmClock.EXTRA_HOUR, local.hour)
-                    putExtra(AlarmClock.EXTRA_MINUTES, local.minute)
-                    putExtra(AlarmClock.EXTRA_MESSAGE, fields.label ?: L10n.tr("Alarm"))
-                    putExtra(AlarmClock.EXTRA_SKIP_UI, true)
-                    fields.repeats?.takeIf { at == null }?.let { days ->
-                        // Calendar weekdays run Sunday = 1 … Saturday = 7.
-                        putExtra(AlarmClock.EXTRA_DAYS, ArrayList(days.map { (app.hermesconduit.android.model.PhoneChangeFields.WEEKDAYS.indexOf(it) + 1) % 7 + 1 }))
-                    }
-                })
-                remember(id, PhoneAlarmRecord("alarm", fields.label, repeats = fields.repeats.takeIf { at == null },
-                    firesAt = at?.toEpochMilli(), time = if (at == null) time else null, setAt = now.toEpochMilli()))
-            }
-            else -> throw PhoneSourceException(L10n.tr("That alarm isn't on this phone any more."))
-        }
-        return id
-    }
-
-    private fun remember(id: String, record: PhoneAlarmRecord) {
-        val records = records().toMutableMap()
-        records[id] = record
-        save(records.entries.sortedBy { it.value.setAt }.takeLast(PhoneAlarmRecord.MAXIMUM).associate { it.key to it.value })
-    }
-
-    private fun start(intent: Intent) {
-        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        try {
-            context.startActivity(intent)
-        } catch (e: Exception) {
-            throw PhoneSourceException(L10n.tr("Alarms couldn't be reached just now. Try again."))
-        }
-    }
-
-    override fun cancel(id: String) {
-        val records = records()
-        val record = records[id.lowercase()] ?: throw PhoneSourceException(L10n.tr("That alarm isn't on this phone any more."))
-        if (record.kind == "timer") {
-            // The Clock app can't dismiss one timer by name; the record goes, the user stops it in Clock.
-        } else {
-            start(Intent(AlarmClock.ACTION_DISMISS_ALARM).apply {
-                putExtra(AlarmClock.EXTRA_ALARM_SEARCH_MODE, AlarmClock.ALARM_SEARCH_MODE_LABEL)
-                putExtra(AlarmClock.EXTRA_MESSAGE, record.label ?: L10n.tr("Alarm"))
-                putExtra(AlarmClock.EXTRA_SKIP_UI, true)
-            })
-        }
-        save(records - id.lowercase())
-    }
 }

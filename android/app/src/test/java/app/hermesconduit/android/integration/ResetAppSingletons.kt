@@ -35,6 +35,7 @@ class ResetAppSingletons : TestEnvironmentLifecyclePlugin {
             "$APP.ui.kanban.KanbanRuntime" to "instance",
             "$APP.ui.device.VoiceHostTools" to "instance",
             "$APP.ui.phone.PhoneSync" to "instance",
+            "$APP.ui.phone.ConduitAlarms" to "instance",
             "$APP.calls.HermesCalls" to "instance",
             "$APP.wake.WakePhrase" to "instance",
             "$APP.core.ProfileAppearance" to "instance",

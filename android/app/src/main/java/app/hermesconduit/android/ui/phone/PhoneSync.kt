@@ -52,7 +52,7 @@ class PhoneSync private constructor(private val context: Context) {
     val engine = PhoneSyncEngine(
         calendarSource = CalendarContractSource(context),
         statusSource = AndroidPhoneStatusSource(context),
-        alarmSource = AlarmClockSource(context),
+        alarmSource = ConduitAlarmSource(context),
         store = FileTextStore.of(context, "PhoneSync"),
         keys = PhoneKeyStore(DeviceKeyStore.store(context, "phone-key.v1")),
         preferencesStore = SettingsTextStore(settings, PhoneSyncPreferences.STORAGE_KEY),

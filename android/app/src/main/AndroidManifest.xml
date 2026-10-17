@@ -21,7 +21,8 @@
     <!-- Settings > Calendar & phone -->
     <uses-permission android:name="android.permission.READ_CALENDAR" />
     <uses-permission android:name="android.permission.WRITE_CALENDAR" />
-    <uses-permission android:name="com.android.alarm.permission.SET_ALARM" />
+    <!-- Alarms and timers Hermes sets: exact, in the status bar, through Doze (Android 12+ asks). -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
     <!-- Reminders, from tasks apps with the OpenTasks provider. -->
     <uses-permission android:name="org.dmfs.permission.READ_TASKS" />
     <uses-permission android:name="org.dmfs.permission.WRITE_TASKS" />
@@ -64,9 +65,6 @@
         <provider android:authorities="org.tasks.opentasks" />
         <intent>
             <action android:name="android.speech.RecognitionService" />
-        </intent>
-        <intent>
-            <action android:name="android.intent.action.SET_ALARM" />
         </intent>
         <intent>
             <action android:name="android.intent.action.VIEW" />
@@ -253,8 +251,25 @@
             android:exported="false">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.TIME_SET" />
+                <action android:name="android.intent.action.TIMEZONE_CHANGED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <action android:name="android.app.action.SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED" />
             </intent-filter>
         </receiver>
+        <!-- Conduit's alarms and timers going off, Stop, and the ring running out. -->
+        <receiver
+            android:name=".ui.phone.ConduitAlarmReceiver"
+            android:exported="false" />
+        <activity
+            android:name=".ui.phone.AlarmRingActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:launchMode="singleInstance"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
+            android:taskAffinity="app.hermesconduit.android.alarm"
+            android:theme="@style/Theme.Conduit" />
         <service
             android:name=".ui.voice.ReadAloudService"
             android:exported="false"
