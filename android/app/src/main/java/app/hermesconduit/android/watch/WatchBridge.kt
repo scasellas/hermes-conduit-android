@@ -84,6 +84,7 @@ class WatchBridge private constructor(context: Context) {
         voiceApprovals = settings.getBool(WatchSettings.VOICE_APPROVALS, false),
         profile = hermes.profile.value,
         updatedAtMs = System.currentTimeMillis(),
+        voices = WatchVoiceReadiness.current(settings, WatchDirectConnection(hermes.profile.value, hermes.connection.value?.id ?: "-")),
     )
 
     /** The watch reads this DataItem whenever it runs next (iOS application context). */

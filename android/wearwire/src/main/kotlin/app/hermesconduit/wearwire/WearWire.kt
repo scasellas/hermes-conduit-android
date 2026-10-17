@@ -120,10 +120,16 @@ data class PhoneContext(
     val profile: String,
     val version: Int = WearWire.VERSION,
     val updatedAtMs: Long = 0,
+    /** Each watch voice's last check on this profile ([WatchCallVoices]); one not checked yet is missing. */
+    val voices: Map<String, Boolean> = emptyMap(),
 ) {
+    /** Whether [voice] is known not to start. */
+    fun notSetUp(voice: String): Boolean = voices[voice] == false
+
     fun toJson() = buildJsonObject {
         put("v", version); put("signed_in", signedIn); put("connected", connected)
         put("voice_approvals", voiceApprovals); put("profile", profile); put("updated_at_ms", updatedAtMs)
+        if (voices.isNotEmpty()) put("voices", buildJsonObject { voices.forEach { (k, v) -> put(k, v) } })
     }
 
     fun encoded(): String = toJson().toString()
@@ -138,6 +144,7 @@ data class PhoneContext(
                 profile = o.s("profile") ?: "default",
                 version = o.i("v") ?: 1,
                 updatedAtMs = o.l("updated_at_ms") ?: 0,
+                voices = (o["voices"] as? JsonObject)?.mapNotNull { (k, v) -> (v as? JsonPrimitive)?.booleanOrNull?.let { k to it } }?.toMap().orEmpty(),
             )
         }.getOrNull()
     }
@@ -274,3 +281,40 @@ internal fun JsonObject.i(key: String): Int? = p(key)?.intOrNull
 internal fun JsonObject.l(key: String): Long? = p(key)?.longOrNull
 internal fun JsonObject.b(key: String): Boolean? = p(key)?.booleanOrNull
 internal fun JsonObject.objects(key: String): List<JsonObject> = (this[key] as? JsonArray)?.mapNotNull { it as? JsonObject }.orEmpty()
+
+/**
+ * Which of the watch's voices can start, as the phone last found them for
+ * the active dashboard and profile (port of the iOS `WatchCallVoices`): the
+ * watch's voice picker says which one isn't set up on the Hermes host.
+ */
+data class WatchCallVoices(
+    /** The dashboard and profile the checks were for. */
+    val scope: String = "",
+    /** Each voice's last check; one not checked yet is missing. */
+    val ready: Map<String, Boolean> = emptyMap(),
+) {
+    /** This record for [to]: another dashboard's or profile's checks say nothing about it. */
+    fun scoped(to: String) = if (to == scope) this else WatchCallVoices(to)
+
+    fun noted(voice: String, isReady: Boolean, scope: String) = scoped(scope).let { it.copy(ready = it.ready + (voice to isReady)) }
+
+    fun encoded(): String = buildJsonObject {
+        put("scope", scope)
+        put("ready", buildJsonObject { ready.forEach { (k, v) -> put(k, v) } })
+    }.toString()
+
+    companion object {
+        /** The watch's voices, as both apps name them. */
+        const val GEMINI_LIVE = "geminiLive"
+        const val GPT_LIVE = "gptLive"
+        const val GROK_LIVE = "grokLive"
+
+        fun decode(text: String?): WatchCallVoices = runCatching {
+            val o = WearWire.json.parseToJsonElement(text ?: return WatchCallVoices()) as JsonObject
+            WatchCallVoices(
+                o.s("scope").orEmpty(),
+                (o["ready"] as? JsonObject)?.mapNotNull { (k, v) -> (v as? JsonPrimitive)?.booleanOrNull?.let { k to it } }?.toMap().orEmpty(),
+            )
+        }.getOrDefault(WatchCallVoices())
+    }
+}

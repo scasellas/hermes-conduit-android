@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.CallEnd
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Mic
@@ -41,6 +42,8 @@ import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
 import app.hermesconduit.android.wear.WatchCall
 import app.hermesconduit.android.wear.WatchCall.Phase
+import app.hermesconduit.android.wear.WatchVoiceCall
+import app.hermesconduit.wearwire.WearApproval
 import app.hermesconduit.android.wear.t
 import kotlinx.coroutines.delay
 
@@ -50,12 +53,19 @@ import kotlinx.coroutines.delay
  * request over both, and a summary once the call ends.
  */
 @Composable
-fun CallScreen(state: WatchCall.State, call: WatchCall, onRetry: () -> Unit) {
+fun CallScreen(state: WatchCall.State, call: WatchVoiceCall, onRetry: () -> Unit) {
     if (state.phase == Phase.ENDED) return CallSummary(state, onDone = call::dismissEnded, onRetry = { call.dismissEnded(); onRetry() })
     val approval = state.pendingApproval
     if (approval != null && state.isActive) {
         // Only Approve or Deny takes it down.
         ApprovalCard(approval, busy = false, error = null) { approve -> call.answerApproval(approval, approve) }
+        return
+    }
+    val jobApproval = state.jobApproval
+    if (jobApproval != null && state.isActive) {
+        // A live call's job, answered through the call's grant: Approve allows this one command only.
+        val card = WearApproval(jobApproval.grantId, jobApproval.requestId, jobApproval.title, jobApproval.command, jobApproval.description)
+        ApprovalCard(card, busy = false, error = null) { approve -> call.answerJobApproval(jobApproval, approve) }
         return
     }
     WatchList {
@@ -110,6 +120,16 @@ private fun CallHeader(state: WatchCall.State) {
     }
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text(state.chatTitle ?: "Hermes", style = MaterialTheme.typography.caption2, color = WatchColors.aura, maxLines = 1)
+        if (state.jobsRunning > 0) {
+            Spacer(Modifier.width(6.dp))
+            Icon(
+                Icons.Default.Build,
+                contentDescription = t("Jobs running: %s", state.jobsRunning.toString()),
+                tint = WatchColors.attention,
+                modifier = Modifier.size(12.dp),
+            )
+            Text(state.jobsRunning.toString(), style = MaterialTheme.typography.caption2, color = WatchColors.attention)
+        }
         state.liveSinceMs?.let {
             Spacer(Modifier.width(6.dp))
             Text(elapsed(now - it), style = MaterialTheme.typography.caption2, color = MaterialTheme.colors.onSurfaceVariant)
@@ -162,7 +182,7 @@ private fun elapsed(ms: Long): String {
 }
 
 private fun mood(state: WatchCall.State): OrbMood = when (state.phase) {
-    Phase.IDLE, Phase.PREPARING, Phase.CONNECTING, Phase.THINKING -> OrbMood.WORKING
+    Phase.IDLE, Phase.PREPARING, Phase.CONNECTING, Phase.RECONNECTING, Phase.THINKING -> OrbMood.WORKING
     Phase.LISTENING -> if (state.muted) OrbMood.MUTED else OrbMood.LISTENING
     Phase.SPEAKING -> OrbMood.SPEAKING
     Phase.LOST, Phase.NEEDS_TAP -> OrbMood.ATTENTION
@@ -172,6 +192,7 @@ private fun mood(state: WatchCall.State): OrbMood = when (state.phase) {
 private fun status(state: WatchCall.State): String = when (state.phase) {
     Phase.IDLE, Phase.PREPARING -> t("Starting…")
     Phase.CONNECTING -> t("Connecting…")
+    Phase.RECONNECTING -> t("Reconnecting…")
     Phase.LISTENING -> if (state.muted) t("Muted") else t("Listening")
     Phase.THINKING -> t("Thinking…")
     Phase.SPEAKING -> t("Speaking")
@@ -188,6 +209,7 @@ private fun detail(state: WatchCall.State): String? = when (state.phase) {
     Phase.LOST -> state.notice ?: t("Tap to try again")
     Phase.NEEDS_TAP -> state.notice ?: t("Tap to continue")
     Phase.LISTENING -> state.caption ?: state.notice
+    Phase.RECONNECTING -> state.notice
     else -> null
 }
 

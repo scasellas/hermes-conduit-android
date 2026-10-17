@@ -10,8 +10,9 @@ class WearApp : Application() {
     val scope = MainScope()
     val link by lazy { PhoneLink(this, scope) }
     val log by lazy { WatchCallLog(this) { link } }
-    val call by lazy { WatchCall(this, scope, link, log) }
     val prefs by lazy { WatchPrefs(this) }
+    /** The app's one call, whichever voice runs it. */
+    val call by lazy { WatchVoiceCall(this, scope, link, log, prefs) }
 
     override fun onCreate() {
         super.onCreate()
@@ -32,6 +33,15 @@ class WatchPrefs(context: Context) {
     fun setCallOnOpen(on: Boolean) {
         prefs.edit().putBoolean(CALL_ON_OPEN, on).apply()
         _callOnOpen.value = on
+    }
+
+    private val _engine = MutableStateFlow(WatchVoiceEngine.of(prefs.getString(WatchVoiceEngine.STORAGE_KEY, null)) ?: WatchVoiceEngine.GEMINI_LIVE)
+    /** The voice the next call talks to. */
+    val engine: StateFlow<WatchVoiceEngine> = _engine
+
+    fun setEngine(engine: WatchVoiceEngine) {
+        prefs.edit().putString(WatchVoiceEngine.STORAGE_KEY, engine.raw).apply()
+        _engine.value = engine
     }
 
     companion object {

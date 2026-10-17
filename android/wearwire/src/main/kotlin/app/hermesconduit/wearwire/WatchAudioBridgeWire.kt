@@ -6,6 +6,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import java.util.Base64
 
 /**
  * A watch call to GPT-Live (or Grok) through the Hermes host's audio bridge
@@ -182,6 +183,22 @@ object WatchAudioBridgeWire {
 
     fun samples(pcm: ByteArray): ShortArray = ShortArray(pcm.size / 2) { i ->
         ((pcm[2 * i].toInt() and 0xff) or (pcm[2 * i + 1].toInt() shl 8)).toShort()
+    }
+
+    /** PCM16 in pieces that each fit one sealed bridge message, cut on whole samples. */
+    fun audioChunks(pcm: ByteArray, limit: Int = MAX_PLAIN_BYTES): List<ByteArray> {
+        val size = maxOf(2, limit - limit % 2)
+        if (pcm.size <= size) return listOf(pcm)
+        return (pcm.indices step size).map { start -> pcm.copyOfRange(start, minOf(start + size, pcm.size)) }
+    }
+
+    /** The PCM of an input_audio_buffer.append event, else null. */
+    fun appendedAudio(text: String): ByteArray? {
+        if (!text.contains("input_audio_buffer.append")) return null
+        val o = runCatching { WearWire.json.parseToJsonElement(text) as? JsonObject }.getOrNull() ?: return null
+        if ((o["type"] as? JsonPrimitive)?.content != "input_audio_buffer.append") return null
+        val audio = (o["audio"] as? JsonPrimitive)?.takeIf { it.isString }?.content ?: return null
+        return runCatching { Base64.getDecoder().decode(audio) }.getOrNull()
     }
 
     // endregion

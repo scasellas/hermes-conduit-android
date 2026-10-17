@@ -295,6 +295,16 @@
                 <action android:name="com.google.android.gms.wearable.DATA_CHANGED" />
                 <data android:scheme="wear" android:host="*" android:pathPrefix="/conduit/log/" />
             </intent-filter>
+            <!-- A watch voice call's queued messages (its end, a job the phone takes later). -->
+            <intent-filter>
+                <action android:name="com.google.android.gms.wearable.DATA_CHANGED" />
+                <data android:scheme="wear" android:host="*" android:pathPrefix="/conduit/wvq/" />
+            </intent-filter>
+            <!-- A watch voice call's requests (WatchVoiceWire), answered with the reply. -->
+            <intent-filter>
+                <action android:name="com.google.android.gms.wearable.REQUEST_RECEIVED" />
+                <data android:scheme="wear" android:host="*" android:pathPrefix="/conduit/wv" />
+            </intent-filter>
         </service>
         <provider
             android:name="androidx.core.content.FileProvider"

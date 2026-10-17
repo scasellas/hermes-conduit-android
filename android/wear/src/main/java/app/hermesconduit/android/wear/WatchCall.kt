@@ -32,7 +32,7 @@ class WatchCall(
     private val link: PhoneLink,
     private val log: WatchCallLog,
 ) {
-    enum class Phase { IDLE, PREPARING, CONNECTING, LISTENING, THINKING, SPEAKING, NEEDS_TAP, LOST, ENDING, ENDED }
+    enum class Phase { IDLE, PREPARING, CONNECTING, LISTENING, THINKING, SPEAKING, RECONNECTING, NEEDS_TAP, LOST, ENDING, ENDED }
 
     data class Line(val fromUser: Boolean, val text: String)
 
@@ -45,6 +45,10 @@ class WatchCall(
         val notice: String? = null,
         val transcript: List<Line> = emptyList(),
         val pendingApproval: WearApproval? = null,
+        /** A live call's job asking for approval through the relay (Approve once and Deny on the card). */
+        val jobApproval: app.hermesconduit.wearwire.WatchJobAnswer.Approval? = null,
+        /** Jobs the call started that Hermes reports running. */
+        val jobsRunning: Int = 0,
         val liveSinceMs: Long? = null,
         val endedAtMs: Long? = null,
         val endReason: String? = null,
