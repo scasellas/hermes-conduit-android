@@ -20,6 +20,7 @@ import androidx.health.connect.client.records.OxygenSaturationRecord
 import androidx.health.connect.client.records.Record
 import androidx.health.connect.client.records.RespiratoryRateRecord
 import androidx.health.connect.client.records.RestingHeartRateRecord
+import androidx.health.connect.client.records.SkinTemperatureRecord
 import androidx.health.connect.client.records.SleepSessionRecord
 import androidx.health.connect.client.records.SpeedRecord
 import androidx.health.connect.client.records.StepsRecord
@@ -34,6 +35,7 @@ import androidx.health.connect.client.request.ReadRecordsRequest
 import androidx.health.connect.client.time.TimeRangeFilter
 import app.hermesconduit.android.model.HealthBucket
 import app.hermesconduit.android.model.HealthCategory
+import app.hermesconduit.android.model.HealthDerived
 import app.hermesconduit.android.model.HealthEvent
 import app.hermesconduit.android.model.HealthEventKind
 import app.hermesconduit.android.model.HealthGrain
@@ -69,6 +71,7 @@ class HealthConnectSource(private val context: Context) : HealthDataSource {
 
     // region Types and permissions
 
+    /** The record a metric's readings, and the changes of its detailed readings, come from. */
     private fun recordType(metric: HealthMetric): KClass<out Record>? = when (metric) {
         HealthMetric.STEPS -> StepsRecord::class
         HealthMetric.DISTANCE_WALKING_RUNNING -> DistanceRecord::class
@@ -86,16 +89,26 @@ class HealthConnectSource(private val context: Context) : HealthDataSource {
         HealthMetric.HEIGHT -> HeightRecord::class
         HealthMetric.VO2_MAX -> Vo2MaxRecord::class
         HealthMetric.WALKING_SPEED -> SpeedRecord::class
-        // Health Connect has no record for these (Apple Watch only on iOS).
-        HealthMetric.DISTANCE_CYCLING, HealthMetric.STAND_TIME, HealthMetric.WALKING_HEART_RATE_AVERAGE,
-        HealthMetric.WRIST_TEMPERATURE, HealthMetric.SIX_MINUTE_WALK_DISTANCE -> null
+        HealthMetric.WRIST_TEMPERATURE -> SkinTemperatureRecord::class
+        // Made from sessions (HealthDerived): a ride's or walk's changes come with its session.
+        HealthMetric.DISTANCE_CYCLING, HealthMetric.WALKING_HEART_RATE_AVERAGE -> ExerciseSessionRecord::class
+        // Health Connect has no record for these: no stand hours (Apple Watch only), and no six-minute
+        // walk test, neither as a record nor as an exercise type.
+        HealthMetric.STAND_TIME, HealthMetric.SIX_MINUTE_WALK_DISTANCE -> null
+    }
+
+    /** Every record a metric reads. */
+    private fun readTypes(metric: HealthMetric): List<KClass<out Record>> = when (metric) {
+        HealthMetric.DISTANCE_CYCLING -> listOf(ExerciseSessionRecord::class, DistanceRecord::class)
+        HealthMetric.WALKING_HEART_RATE_AVERAGE -> listOf(ExerciseSessionRecord::class, HeartRateRecord::class)
+        else -> listOfNotNull(recordType(metric))
     }
 
     /** The read permissions sharing `categories` asks for, plus background and history reads. */
     fun permissions(categories: Set<HealthCategory>): Set<String> {
         val types = mutableSetOf<KClass<out Record>>()
         for (category in categories) {
-            category.metrics.mapNotNullTo(types, ::recordType)
+            category.metrics.flatMapTo(types, ::readTypes)
             when (category) {
                 HealthCategory.SLEEP -> types += SleepSessionRecord::class
                 HealthCategory.WORKOUTS -> types += listOf(
@@ -104,6 +117,8 @@ class HealthConnectSource(private val context: Context) : HealthDataSource {
                 else -> Unit
             }
         }
+        // Skin temperature is newer than Health Connect on some phones.
+        if (!feature(HealthConnectFeatures.FEATURE_SKIN_TEMPERATURE)) types -= SkinTemperatureRecord::class
         val permissions = types.map { HealthPermission.getReadPermission(it) }.toMutableSet()
         if (feature(HealthConnectFeatures.FEATURE_READ_HEALTH_DATA_IN_BACKGROUND)) permissions += HealthPermission.PERMISSION_READ_HEALTH_DATA_IN_BACKGROUND
         if (feature(HealthConnectFeatures.FEATURE_READ_HEALTH_DATA_HISTORY)) permissions += HealthPermission.PERMISSION_READ_HEALTH_DATA_HISTORY
@@ -116,16 +131,59 @@ class HealthConnectSource(private val context: Context) : HealthDataSource {
 
     suspend fun granted(): Set<String> = runCatching { client.permissionController.getGrantedPermissions() }.getOrDefault(emptySet())
 
+    private suspend fun readable(metric: HealthMetric): Boolean {
+        val types = readTypes(metric)
+        val granted = granted()
+        return types.isNotEmpty() && types.all { HealthPermission.getReadPermission(it) in granted }
+    }
+
     // endregion
 
     // region HealthDataSource
 
     override suspend fun buckets(metric: HealthMetric, grain: HealthGrain, from: Instant, to: Instant, zone: ZoneId): List<HealthBucket> {
-        val type = recordType(metric) ?: return emptyList()
-        if (HealthPermission.getReadPermission(type) !in granted()) return emptyList()
-        return if (metric.aggregation == app.hermesconduit.android.model.HealthAggregation.SUM) sums(metric, grain, from, to, zone)
-        else HealthStats.buckets(readings(metric, from, to), grain, from, to, zone)
+        if (!readable(metric)) return emptyList()
+        return when {
+            metric == HealthMetric.DISTANCE_CYCLING -> cyclingDistance(grain, from, to, zone)
+            metric == HealthMetric.WALKING_HEART_RATE_AVERAGE -> HealthStats.buckets(walkingHeartRates(from, to), grain, from, to, zone)
+            metric.aggregation == app.hermesconduit.android.model.HealthAggregation.SUM -> sums(metric, grain, from, to, zone)
+            else -> HealthStats.buckets(readings(metric, from, to), grain, from, to, zone)
+        }
     }
+
+    /** Sessions of `types` overlapping [from, to); a session may have started the day before. */
+    private suspend fun sessions(types: Set<Int>, from: Instant, to: Instant): List<ExerciseSessionRecord> =
+        readAll(ExerciseSessionRecord::class, from.minus(Duration.ofDays(1)), to)
+            .filter { it.exerciseType in types && it.endTime > from && it.startTime < to }
+
+    /**
+     * iOS's cycling distance, from Health Connect's distance inside biking
+     * sessions: Health Connect's own total for each part of a ride in a
+     * bucket, so apps are merged by the user's priority as in the other sums.
+     */
+    private suspend fun cyclingDistance(grain: HealthGrain, from: Instant, to: Instant, zone: ZoneId): List<HealthBucket> {
+        val rides = sessions(CYCLING_TYPES, from, to).map { it.startTime to it.endTime }
+        return HealthDerived.sums(HealthDerived.slices(rides, grain, from, to, zone).map { it to distance(it.start, it.end) })
+    }
+
+    private suspend fun distance(from: Instant, to: Instant): Double? =
+        client.aggregate(AggregateRequest(setOf(DistanceRecord.DISTANCE_TOTAL), TimeRangeFilter.between(from, to)))[DistanceRecord.DISTANCE_TOTAL]?.inMeters
+
+    /**
+     * An approximation of iOS's walking heart rate average, which Apple
+     * computes from heart rate while the user walks during the day: here
+     * the mean heart rate during each walking session (overlapping sessions
+     * as one), as a reading at the session's start. Walks nobody recorded
+     * as a session don't count, and hikes are left out (climbing raises
+     * the heart rate).
+     */
+    private suspend fun walkingHeartRates(from: Instant, to: Instant): List<HealthStats.Reading> =
+        HealthDerived.merged(sessions(WALKING_TYPES, from, to).map { it.startTime to it.endTime }).mapNotNull { (start, end) ->
+            meanHeartRate(start, end)?.let { HealthStats.Reading(start, it) }
+        }
+
+    private suspend fun meanHeartRate(from: Instant, to: Instant): Double? =
+        HealthDerived.mean(readAll(HeartRateRecord::class, from, to).flatMap { readingsOf(HealthMetric.HEART_RATE, it) }, from, to)
 
     private fun sumMetric(metric: HealthMetric): AggregateMetric<*>? = when (metric) {
         HealthMetric.STEPS -> StepsRecord.COUNT_TOTAL
@@ -202,6 +260,10 @@ class HealthConnectSource(private val context: Context) : HealthDataSource {
         is HeightRecord -> listOf(HealthStats.Reading(record.time, record.height.inMeters))
         is Vo2MaxRecord -> listOf(HealthStats.Reading(record.time, record.vo2MillilitersPerMinuteKilogram))
         is SpeedRecord -> record.samples.map { HealthStats.Reading(it.time, it.speed.inMetersPerSecond) }
+        // Any location (a ring's finger too): the comparable night-time skin temperature.
+        is SkinTemperatureRecord -> listOfNotNull(
+            HealthDerived.skinTemperature(record.baseline?.inCelsius, record.deltas.map { it.delta.inCelsius })?.let { HealthStats.Reading(record.startTime, it) },
+        )
         else -> emptyList()
     }
 
@@ -238,7 +300,8 @@ class HealthConnectSource(private val context: Context) : HealthDataSource {
             HealthEventStream.Sleep -> SleepSessionRecord::class
             is HealthEventStream.Samples -> recordType(stream.metric) ?: return HealthEventChanges(emptyList(), emptyList(), anchor, false)
         }
-        if (HealthPermission.getReadPermission(type) !in granted()) return HealthEventChanges(emptyList(), emptyList(), anchor, false)
+        val readable = if (stream is HealthEventStream.Samples) readable(stream.metric) else HealthPermission.getReadPermission(type) in granted()
+        if (!readable) return HealthEventChanges(emptyList(), emptyList(), anchor, false)
         val parts = anchor?.split('\n')
         if (parts == null || parts[0] == "r") {
             // First read: what's there now, page by page; changes after it come from the token taken first.
@@ -281,13 +344,19 @@ class HealthConnectSource(private val context: Context) : HealthDataSource {
         is DistanceRecord -> record.startTime
         is ActiveCaloriesBurnedRecord -> record.startTime
         is FloorsClimbedRecord -> record.startTime
+        is SkinTemperatureRecord -> record.startTime
         else -> readingsOf(HealthMetric.HEART_RATE, record).firstOrNull()?.at
             ?: (record as? BloodPressureRecord)?.time ?: Instant.EPOCH
     }
 
-    /** A sleep session's stages each have their own id; a deletion names the session only. */
-    private fun deletedIDs(stream: HealthEventStream, id: String): List<String> =
-        if (stream == HealthEventStream.Sleep) (0 until MAX_STAGES).map { "$id.$it" } else listOf(id)
+    /** A sleep session's stages and a series record's readings each have their own id; a deletion names the record only. */
+    private fun deletedIDs(stream: HealthEventStream, id: String): List<String> = when {
+        stream == HealthEventStream.Sleep -> (0 until MAX_STAGES).map { "$id.$it" }
+        stream !is HealthEventStream.Samples -> listOf(id)
+        stream.metric in SESSION_METRICS -> listOf(HealthDerived.sessionID(id, stream.metric))
+        recordType(stream.metric) == HeartRateRecord::class || recordType(stream.metric) == SpeedRecord::class -> HealthDerived.seriesIDs(id)
+        else -> listOf(id)
+    }
 
     private suspend fun events(stream: HealthEventStream, record: Record): List<HealthEvent> = when (stream) {
         HealthEventStream.Workouts -> (record as? ExerciseSessionRecord)?.let { listOf(workout(it)) }.orEmpty()
@@ -297,7 +366,26 @@ class HealthConnectSource(private val context: Context) : HealthDataSource {
                     data = mapOf("stage" to HealthValue.Text(segment.stage.raw)), source = segment.source)
             }
         }.orEmpty()
-        is HealthEventStream.Samples -> listOfNotNull(sample(stream.metric, record))
+        is HealthEventStream.Samples -> samples(stream.metric, record)
+    }
+
+    private suspend fun samples(metric: HealthMetric, record: Record): List<HealthEvent> = when {
+        metric in SESSION_METRICS -> listOfNotNull((record as? ExerciseSessionRecord)?.let { sessionSample(metric, it) })
+        // One reading per sample, as iOS sends one per HealthKit sample.
+        record is HeartRateRecord || record is SpeedRecord ->
+            HealthDerived.seriesEvents(record.metadata.id, metric, label(record.metadata.dataOrigin.packageName), readingsOf(metric, record))
+        else -> listOfNotNull(sample(metric, record))
+    }
+
+    /** A ride's distance or a walk's mean heart rate (see [cyclingDistance], [walkingHeartRates]); nothing for other sessions. */
+    private suspend fun sessionSample(metric: HealthMetric, session: ExerciseSessionRecord): HealthEvent? {
+        val value = when (metric) {
+            HealthMetric.DISTANCE_CYCLING -> if (session.exerciseType in CYCLING_TYPES) distance(session.startTime, session.endTime) else null
+            HealthMetric.WALKING_HEART_RATE_AVERAGE -> if (session.exerciseType in WALKING_TYPES) meanHeartRate(session.startTime, session.endTime) else null
+            else -> null
+        } ?: return null
+        return HealthEvent(HealthDerived.sessionID(session.metadata.id, metric), HealthEventKind.SAMPLE, metric.raw, session.startTime, session.endTime,
+            value, metric.unit, source = label(session.metadata.dataOrigin.packageName))
     }
 
     private fun sample(metric: HealthMetric, record: Record): HealthEvent? {
@@ -311,15 +399,7 @@ class HealthConnectSource(private val context: Context) : HealthDataSource {
             is ActiveCaloriesBurnedRecord -> event(record.startTime, record.endTime, record.energy.inKilocalories)
             is FloorsClimbedRecord -> event(record.startTime, record.endTime, record.floors)
             is ExerciseSessionRecord -> event(record.startTime, record.endTime, Duration.between(record.startTime, record.endTime).toMillis() / 60_000.0)
-            // A series record goes as one reading: its average, with its range.
-            is HeartRateRecord, is SpeedRecord -> {
-                val values = readingsOf(metric, record).map { it.value }.takeIf { it.isNotEmpty() } ?: return null
-                val start = if (record is HeartRateRecord) record.startTime else (record as SpeedRecord).startTime
-                val end = if (record is HeartRateRecord) record.endTime else (record as SpeedRecord).endTime
-                event(start, end, values.average(), mapOf(
-                    "min" to HealthValue.Num(values.min()), "max" to HealthValue.Num(values.max()), "count" to HealthValue.Num(values.size.toDouble()),
-                ))
-            }
+            is SkinTemperatureRecord -> readingsOf(metric, record).firstOrNull()?.let { event(record.startTime, record.endTime, it.value) }
             else -> readingsOf(metric, record).firstOrNull()?.let { event(it.at, it.at, it.value) }
         }
     }
@@ -357,6 +437,10 @@ class HealthConnectSource(private val context: Context) : HealthDataSource {
 
     companion object {
         const val MAX_STAGES = 64
+        val CYCLING_TYPES = setOf(ExerciseSessionRecord.EXERCISE_TYPE_BIKING, ExerciseSessionRecord.EXERCISE_TYPE_BIKING_STATIONARY)
+        val WALKING_TYPES = setOf(ExerciseSessionRecord.EXERCISE_TYPE_WALKING)
+        /** Metrics made from sessions, one reading per ride or walk. */
+        val SESSION_METRICS = setOf(HealthMetric.DISTANCE_CYCLING, HealthMetric.WALKING_HEART_RATE_AVERAGE)
 
         fun activityName(type: Int): String = when (type) {
             ExerciseSessionRecord.EXERCISE_TYPE_RUNNING, ExerciseSessionRecord.EXERCISE_TYPE_RUNNING_TREADMILL -> "running"

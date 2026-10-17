@@ -28,13 +28,13 @@ fun roundHalfAway(value: Double): Double = if (value < 0) -floor(-value + 0.5) e
  * units must match METRICS in the notifier's health_store.py.
  */
 enum class HealthCategory(val raw: String, val title: String, val summary: String) {
-    ACTIVITY("activity", "Activity", "Steps, distance, active energy, exercise and stand time, flights climbed"),
+    ACTIVITY("activity", "Activity", "Steps, distance, active energy, exercise time, flights climbed"),
     HEART("heart", "Heart", "Heart rate, resting and walking heart rate, heart rate variability"),
     SLEEP("sleep", "Sleep", "Time asleep and in bed, sleep stages"),
     WORKOUTS("workouts", "Workouts", "Each workout: type, time, duration, energy, distance, heart rate"),
     BODY("body", "Body measurements", "Weight, body fat, height"),
     VITALS("vitals", "Vitals", "Blood oxygen, respiratory rate, blood pressure, sleeping wrist temperature"),
-    FITNESS("fitness", "Fitness", "Cardio fitness (VO2 max), walking speed, six-minute walk");
+    FITNESS("fitness", "Fitness", "Cardio fitness (VO2 max), walking speed");
 
     /** Sleep and workouts are always sent as their own events. */
     val hasDetailedReadings: Boolean get() = this != SLEEP && this != WORKOUTS
@@ -457,7 +457,7 @@ object HealthStats {
         val inRange = readings.filter { it.at >= from && it.at < to }
         if (inRange.isEmpty()) return emptyList()
         return inRange.groupBy { bucketStart(it.at, grain, zone) }.toSortedMap().map { (start, group) ->
-            val end = if (grain == HealthGrain.HOUR) start.atZone(zone).plusHours(1).toInstant() else start.atZone(zone).plusDays(1).toInstant()
+            val end = bucketEnd(start, grain, zone)
             val values = group.map { it.value }
             HealthBucket(start = start, end = end, min = values.min(), avg = values.average(), max = values.max())
         }
@@ -468,6 +468,95 @@ object HealthStats {
         return if (grain == HealthGrain.HOUR) local.withMinute(0).withSecond(0).withNano(0).toInstant()
         else local.toLocalDate().atStartOfDay(zone).toInstant()
     }
+
+    fun bucketEnd(start: Instant, grain: HealthGrain, zone: ZoneId): Instant =
+        if (grain == HealthGrain.HOUR) start.atZone(zone).plusHours(1).toInstant() else start.atZone(zone).plusDays(1).toInstant()
+}
+
+/**
+ * Metrics Health Connect has no record for, made from the records it has:
+ * cycling distance is the distance inside biking sessions, walking heart
+ * rate the heart rate inside walking sessions, wrist temperature a skin
+ * temperature record's baseline plus its deltas. Each still goes as the iOS
+ * metric, in its unit and buckets.
+ */
+object HealthDerived {
+    /** A part of a time range that falls in one hourly or daily bucket. */
+    data class Slice(val bucketStart: Instant, val bucketEnd: Instant, val start: Instant, val end: Instant)
+
+    /** Overlapping ranges joined, so two apps recording one ride count it once. Sorted by start. */
+    fun merged(ranges: List<Pair<Instant, Instant>>): List<Pair<Instant, Instant>> {
+        val merged = mutableListOf<Pair<Instant, Instant>>()
+        for ((start, end) in ranges.filter { it.second > it.first }.sortedBy { it.first }) {
+            val last = merged.lastOrNull()
+            if (last != null && start <= last.second) merged[merged.lastIndex] = last.first to maxOf(last.second, end)
+            else merged += start to end
+        }
+        return merged
+    }
+
+    /** `ranges` (merged first) cut at bucket boundaries, inside [from, to). */
+    fun slices(ranges: List<Pair<Instant, Instant>>, grain: HealthGrain, from: Instant, to: Instant, zone: ZoneId): List<Slice> {
+        val slices = mutableListOf<Slice>()
+        for ((rangeStart, rangeEnd) in merged(ranges)) {
+            var start = maxOf(rangeStart, from)
+            val end = minOf(rangeEnd, to)
+            while (start < end) {
+                val bucketStart = HealthStats.bucketStart(start, grain, zone)
+                val bucketEnd = HealthStats.bucketEnd(bucketStart, grain, zone)
+                val sliceEnd = minOf(end, bucketEnd)
+                slices += Slice(bucketStart, bucketEnd, start, sliceEnd)
+                start = sliceEnd
+            }
+        }
+        return slices
+    }
+
+    /** One sum bucket per bucket that has a value; a slice without data (null) adds nothing. */
+    fun sums(values: List<Pair<Slice, Double?>>): List<HealthBucket> =
+        values.filter { it.second != null }.groupBy { it.first.bucketStart }.toSortedMap().map { (start, group) ->
+            HealthBucket(start, group.first().first.bucketEnd, sum = group.sumOf { it.second ?: 0.0 })
+        }
+
+    /** The mean of the readings in [start, end], or null without any. */
+    fun mean(readings: List<HealthStats.Reading>, start: Instant, end: Instant): Double? =
+        readings.filter { it.at >= start && it.at <= end }.map { it.value }.takeIf { it.isNotEmpty() }?.average()
+
+    /**
+     * iOS sends Apple's sleeping wrist temperature, an absolute temperature
+     * (the Health app shows it against a baseline, HealthKit stores the
+     * value). Health Connect keeps a baseline and deviations from it, so the
+     * value is the baseline plus the mean deviation. Without a baseline
+     * there is no absolute value to send, and a bare deviation would read as
+     * a temperature near 0 °C.
+     */
+    fun skinTemperature(baselineCelsius: Double?, deltasCelsius: List<Double>): Double? {
+        if (baselineCelsius == null || deltasCelsius.isEmpty()) return null
+        return baselineCelsius + deltasCelsius.average()
+    }
+
+    /**
+     * A series record (heart rate, speed) goes as one reading per sample, as
+     * iOS sends one per HealthKit sample. Each takes the record's id and its
+     * index, so a deleted record's readings can be named (see [seriesIDs]).
+     */
+    fun seriesEvents(id: String, metric: HealthMetric, source: String?, readings: List<HealthStats.Reading>): List<HealthEvent> =
+        readings.mapIndexed { index, reading ->
+            HealthEvent("$id.$index", HealthEventKind.SAMPLE, metric.raw, reading.at, reading.at, reading.value, metric.unit, source = source)
+        }
+
+    /** The readings a deleted series record had sent. Health Connect names only the record, so up to [MAX_SERIES_SAMPLES]. */
+    fun seriesIDs(id: String): List<String> = (0 until MAX_SERIES_SAMPLES).map { "$id.$it" }
+
+    /** A derived reading made from a whole session: the session's id and the metric, apart from the workout's own id. */
+    fun sessionID(id: String, metric: HealthMetric): String = "$id.${metric.raw}"
+
+    /**
+     * Deletions name this many readings of a series record. A record with
+     * more (rare: apps write a series an hour or so long) keeps its later
+     * readings on the host after Health Connect deletes it.
+     */
+    const val MAX_SERIES_SAMPLES = 1_000
 }
 
 // endregion
