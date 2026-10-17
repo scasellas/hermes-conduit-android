@@ -2,7 +2,7 @@
 
 A native Android client for [Hermes Agent](https://github.com/NousResearch/hermes-agent), ported from the iOS app in this repository. It is written in Kotlin with Jetpack Compose and talks to the same self-hosted Hermes dashboard. There is no relay and no extra server-side setup.
 
-> **Status:** a native port of the iOS app, built feature area by feature area against the same Hermes dashboard protocol. `docs/IOS_FEATURE_INVENTORY.md` lists every iOS feature; `docs/PORTING.md` describes the architecture.
+> **Status:** a native port of the iOS app, built feature area by feature area against the same Hermes dashboard protocol. `docs/IOS_FEATURE_INVENTORY.md` lists every iOS feature, `docs/PARITY.md` gives the Android status of each one, and `docs/PORTING.md` describes the architecture.
 
 ## What's included
 
@@ -18,7 +18,12 @@ A native Android client for [Hermes Agent](https://github.com/NousResearch/herme
 | **Platform** | `conduit://` links, share target, “Ask Hermes” text action, launcher shortcuts, Quick Settings tile, home-screen widgets, digital assistant “Ask Hermes about screen”, Android Auto and Wear OS replies through messaging notifications |
 | **Languages** | The 14 iOS languages, from the iOS String Catalogs |
 
-Voice, live voice providers, Calls from Hermes, wake phrase, device data (Health Connect, location, calendar & phone) and the Wear OS app are ported in follow-up changes; see the inventory for their status.
+| **Voice** | Read Aloud, dictation (on-device, Hermes or speech server), voice conversation with barge-in and spoken controls, voice background jobs, Gemini Live / GPT-Live (WebRTC) / Grok Live with call cards, transcripts and Resume Call, wake phrase (sherpa-onnx), Calls from Hermes (full-screen ringing) |
+| **On this device** | Health Connect sync, calendar & phone (events, alarms, status, Hermes-proposed changes), location sharing with places and geofences, sealed end-to-end uploads |
+| **Automation** | “Send to Hermes” intent and broadcast for Tasker/MacroDroid/Automate (opt-in), `conduit://voice` |
+| **Wear OS** (`:wear`) | Talk to Hermes (through the phone, direct Gemini Live, Grok/GPT-Live), recent chats, approvals, call log, tile, complication |
+
+Release builds are split per ABI (`arm64-v8a`, `armeabi-v7a`, `x86_64`) because the wake engine and WebRTC ship native libraries.
 
 ## Building
 
