@@ -1,8 +1,14 @@
 package app.hermesconduit.android.car
 
 import app.hermesconduit.android.core.L10n
+import app.hermesconduit.android.core.live.LiveVoiceHostIssue
+import app.hermesconduit.android.model.LiveVoiceMode
 import app.hermesconduit.android.model.SessionSummary
+import app.hermesconduit.android.model.VoiceProfilePreferences
+import app.hermesconduit.android.ui.voice.VoiceBackgroundJob
 import app.hermesconduit.android.ui.voice.VoiceConversationState
+import app.hermesconduit.android.ui.voice.VoiceThreadTarget
+import app.hermesconduit.android.ui.voice.live.LiveCallPhase
 import kotlin.math.PI
 import kotlin.math.max
 import kotlin.math.min
@@ -80,6 +86,106 @@ enum class CarVoiceState {
             VoiceConversationState.SPEAKING, VoiceConversationState.MUTED -> RESPONDING
             VoiceConversationState.FAILED -> ERROR
         }
+
+        /**
+         * The same mapping for a live call (Gemini Live, GPT-Live and Grok
+         * Live share one phase type here; iOS maps the Gemini and GPT-Live
+         * phases with identical tables, Gemini's also covering reconnecting).
+         * Connecting, reconnecting, a pause for another sound and saying
+         * goodbye are all "the assistant is working".
+         */
+        fun map(phase: LiveCallPhase): CarVoiceState = when (phase) {
+            LiveCallPhase.Idle -> READY
+            LiveCallPhase.Connecting, LiveCallPhase.Reconnecting, LiveCallPhase.Paused, LiveCallPhase.Ending -> PROCESSING
+            LiveCallPhase.Listening -> LISTENING
+            LiveCallPhase.Speaking -> RESPONDING
+            is LiveCallPhase.Failed -> ERROR
+        }
+    }
+}
+
+/** The voice mode the profile uses, which decides the controller the car presents and drives (iOS CarPlayVoiceMode). */
+enum class CarVoiceMode {
+    CLASSIC,
+    GEMINI_LIVE,
+    GPT_LIVE,
+    GROK_LIVE;
+
+    /** The live mode this is; null for classic. */
+    val live: LiveVoiceMode?
+        get() = when (this) {
+            CLASSIC -> null
+            GEMINI_LIVE -> LiveVoiceMode.GEMINI_LIVE
+            GPT_LIVE -> LiveVoiceMode.GPT_LIVE
+            GROK_LIVE -> LiveVoiceMode.GROK_LIVE
+        }
+
+    val title: String
+        get() = when (this) {
+            CLASSIC -> L10n.tr("Classic voice")
+            GEMINI_LIVE -> L10n.tr("Gemini Live")
+            GPT_LIVE -> L10n.tr("GPT-Live")
+            GROK_LIVE -> L10n.tr("Grok Live")
+        }
+
+    companion object {
+        /** The profile keeps at most one live mode on; none is classic. */
+        fun of(preferences: VoiceProfilePreferences): CarVoiceMode = when {
+            preferences.geminiLiveEnabled -> GEMINI_LIVE
+            preferences.gptLiveEnabled -> GPT_LIVE
+            preferences.grokLiveEnabled -> GROK_LIVE
+            else -> CLASSIC
+        }
+
+        /** The preferences with [mode] as the only voice mode on. */
+        fun applying(mode: CarVoiceMode, preferences: VoiceProfilePreferences): VoiceProfilePreferences = preferences.copy(
+            geminiLiveEnabled = mode == GEMINI_LIVE,
+            gptLiveEnabled = mode == GPT_LIVE,
+            grokLiveEnabled = mode == GROK_LIVE,
+        )
+    }
+}
+
+/**
+ * What Listen does in a GPT-Live call (iOS CarPlayGPTLiveListenAction). The
+ * call is full duplex, so there is nothing to interrupt: the driver just
+ * talks. Listen shows only at Ready and Error, so only START is reached from
+ * the car; the other phases are mapped so the table stays total.
+ */
+enum class CarGPTLiveListenAction {
+    /** Nothing running (or it failed): start a call. */
+    START,
+    /** Already in a call the driver can talk into, or connecting or ending. */
+    NOTHING;
+
+    companion object {
+        fun forPhase(phase: LiveCallPhase): CarGPTLiveListenAction = when (phase) {
+            LiveCallPhase.Idle, is LiveCallPhase.Failed -> START
+            LiveCallPhase.Connecting, LiveCallPhase.Reconnecting, LiveCallPhase.Listening, LiveCallPhase.Speaking,
+            LiveCallPhase.Paused, LiveCallPhase.Ending -> NOTHING
+        }
+    }
+}
+
+/**
+ * What Listen does in a Gemini Live (or Grok Live) conversation, which
+ * listens continuously instead of turn by turn (iOS
+ * CarPlayGeminiLiveListenAction).
+ */
+enum class CarGeminiLiveListenAction {
+    /** Nothing running (or it failed): start a conversation. */
+    START,
+    /** The model is talking: stop it so the driver can speak. */
+    INTERRUPT,
+    /** Already listening or connecting: nothing to do. */
+    NOTHING;
+
+    companion object {
+        fun forPhase(phase: LiveCallPhase): CarGeminiLiveListenAction = when (phase) {
+            LiveCallPhase.Idle, is LiveCallPhase.Failed -> START
+            LiveCallPhase.Speaking -> INTERRUPT
+            LiveCallPhase.Connecting, LiveCallPhase.Reconnecting, LiveCallPhase.Listening, LiveCallPhase.Paused, LiveCallPhase.Ending -> NOTHING
+        }
     }
 }
 
@@ -97,7 +203,15 @@ enum class CarVoiceIssue {
     /** Hermes has no ready speech-to-text provider. */
     NO_SPEECH_TO_TEXT,
     /** Hermes has no ready text-to-speech provider. */
-    NO_TEXT_TO_SPEECH;
+    NO_TEXT_TO_SPEECH,
+    /** Hermes can't run Gemini Live (no key, no sign-in). */
+    GEMINI_LIVE_NOT_SET_UP,
+    /** Hermes can't run GPT-Live. */
+    GPT_LIVE_NOT_SET_UP,
+    /** Hermes can't run Grok Live. */
+    GROK_LIVE_NOT_SET_UP,
+    /** The Hermes notifier plugin (or its routes for the live mode) is missing. */
+    NOTIFIER_PLUGIN_MISSING;
 
     /** Short titles for the car's screen, longest first. Each names the fix, never failure internals. */
     val titleVariants: List<String>
@@ -107,7 +221,14 @@ enum class CarVoiceIssue {
             MICROPHONE_DENIED -> listOf(L10n.tr("Allow the microphone for Conduit on your phone"), L10n.tr("Microphone not allowed"))
             NO_SPEECH_TO_TEXT -> listOf(L10n.tr("Set up speech to text in Conduit"), L10n.tr("No speech to text"))
             NO_TEXT_TO_SPEECH -> listOf(L10n.tr("Set up assistant voice in Conduit"), L10n.tr("No assistant voice"))
+            GEMINI_LIVE_NOT_SET_UP -> notSetUp(LiveVoiceMode.GEMINI_LIVE)
+            GPT_LIVE_NOT_SET_UP -> notSetUp(LiveVoiceMode.GPT_LIVE)
+            GROK_LIVE_NOT_SET_UP -> notSetUp(LiveVoiceMode.GROK_LIVE)
+            NOTIFIER_PLUGIN_MISSING -> listOf(L10n.tr("Update the Hermes notifier plugin"), L10n.tr("Plugin update needed"))
         }
+
+    private fun notSetUp(mode: LiveVoiceMode) =
+        listOf(L10n.tr("%s isn't set up on Hermes", mode.displayName), L10n.tr("%s not set up", mode.displayName))
 
     companion object {
         /**
@@ -131,24 +252,55 @@ enum class CarVoiceIssue {
             textToSpeechReady == false -> NO_TEXT_TO_SPEECH
             else -> null
         }
+
+        /**
+         * What stops a live call: no Hermes connection, then the host's
+         * check of the mode (kept by the controller while the call is failed
+         * on it), then a denied microphone. The host is checked before the
+         * microphone is asked for, so a host issue is what stopped the call
+         * even with the microphone denied (iOS `setupIssue` for live modes).
+         */
+        fun ofLive(
+            isConnected: Boolean,
+            mode: LiveVoiceMode,
+            hostIssue: LiveVoiceHostIssue?,
+            isMicrophoneDenied: Boolean,
+        ): CarVoiceIssue? = when {
+            !isConnected -> NOT_CONNECTED
+            hostIssue == LiveVoiceHostIssue.PLUGIN_MISSING -> NOTIFIER_PLUGIN_MISSING
+            hostIssue == LiveVoiceHostIssue.NOT_SET_UP -> when (mode) {
+                LiveVoiceMode.GEMINI_LIVE -> GEMINI_LIVE_NOT_SET_UP
+                LiveVoiceMode.GPT_LIVE -> GPT_LIVE_NOT_SET_UP
+                LiveVoiceMode.GROK_LIVE -> GROK_LIVE_NOT_SET_UP
+            }
+            isMicrophoneDenied -> MICROPHONE_DENIED
+            else -> null
+        }
     }
 }
 
 /** What the voice screen's buttons and title depend on besides the state. */
 data class CarVoiceControls(
-    /** The classic microphone is paused (by the driver, or after a long silence). */
+    /** The classic voice mode, as opposed to a live call. */
+    val isClassic: Boolean = true,
+    /** The microphone is muted: the classic one paused (by the driver, or after a long silence), or a live call's. */
     val isMicrophoneMuted: Boolean = false,
     /** What the Error state names as the thing to fix; null shows the generic Error title. */
     val errorIssue: CarVoiceIssue? = null,
     /** The chat Listen talks in, which the Ready title names; null when Listen starts a new one. */
     val chatTitle: String? = null,
-)
+) {
+    /** The classic mode's Listen continues the current chat, so a new chat is its own button. A live call always starts fresh. */
+    val offersNewChat: Boolean get() = isClassic
+}
 
 /** The voice screen's action buttons (iOS CarPlayVoiceButton). The car shows at most two. */
 enum class CarVoiceButton {
     LISTEN,
     NEW_CHAT,
     MUTE,
+    /** Unmutes a live call's microphone. */
+    UNMUTE,
     /** Reopens the classic mode's paused microphone. */
     RESUME,
     END;
@@ -158,19 +310,31 @@ enum class CarVoiceButton {
             LISTEN, RESUME -> L10n.tr("Listen")
             NEW_CHAT -> L10n.tr("New Chat")
             MUTE -> L10n.tr("Mute")
+            UNMUTE -> L10n.tr("Unmute")
             END -> L10n.tr("End")
         }
 
     companion object {
         /** The buttons for one state, in display order. */
         fun buttons(state: CarVoiceState, controls: CarVoiceControls): List<CarVoiceButton> = when (state) {
-            CarVoiceState.READY, CarVoiceState.ERROR -> listOf(LISTEN, NEW_CHAT)
+            CarVoiceState.READY, CarVoiceState.ERROR -> if (controls.offersNewChat) listOf(LISTEN, NEW_CHAT) else listOf(LISTEN)
             // The classic microphone also pauses itself after a long silence,
             // so a paused one offers Listen rather than an Unmute the driver
             // never asked for.
-            else -> if (controls.isMicrophoneMuted) listOf(RESUME, END) else listOf(MUTE, END)
+            else -> if (!controls.isMicrophoneMuted) listOf(MUTE, END) else listOf(if (controls.isClassic) RESUME else UNMUTE, END)
         }
     }
+}
+
+/** The car going away, for the conversations it presented (iOS `releaseCarPlayGeminiLive` and friends). */
+object CarSurfaces {
+    /**
+     * Whether a live call goes on once the car disconnects: only while the
+     * phone shows it (its call screen or the minimised bar, with Conduit on
+     * screen). Nothing else would present it, so nothing would end it.
+     */
+    fun keepsLiveCall(isPhoneOnScreen: Boolean, isCallScreenShown: Boolean, isMinimisedBarShown: Boolean): Boolean =
+        isPhoneOnScreen && (isCallScreenShown || isMinimisedBarShown)
 }
 
 /**
@@ -252,10 +416,50 @@ data class CarChatRow(
     fun matches(id: String?): Boolean = id != null && (id == sessionId || id == runtimeId || id in alternateIds)
 }
 
+/** The chat a live call started from the car works in, as one started from that chat on the phone does. */
+val CarChatRow.thread: VoiceThreadTarget get() = VoiceThreadTarget(runtimeId ?: sessionId, sessionId, title)
+
+/** What a Voice Job row's icon shows. */
+enum class CarJobKind {
+    RUNNING, WAITING, DONE, FAILED, CANCELLED;
+
+    companion object {
+        fun of(status: VoiceBackgroundJob.Status): CarJobKind = when (status) {
+            VoiceBackgroundJob.Status.Starting, VoiceBackgroundJob.Status.Running -> RUNNING
+            VoiceBackgroundJob.Status.NeedsInput -> WAITING
+            VoiceBackgroundJob.Status.Finished -> DONE
+            is VoiceBackgroundJob.Status.Failed -> FAILED
+            VoiceBackgroundJob.Status.Cancelled -> CANCELLED
+        }
+    }
+}
+
+/** One Voice Job in the car's list: its title and status, never its reply. */
+data class CarJobRow(
+    val id: String,
+    val title: String,
+    val status: String,
+    val kind: CarJobKind,
+    /** A settled job can be heard again; a running one has nothing to say yet. */
+    val canReplay: Boolean,
+)
+
+/** A voice mode in the car's Voice list. */
+data class CarModeRow(val mode: CarVoiceMode, val title: String, val isSelected: Boolean)
+
+/** An agent in the car's Voice list. */
+data class CarOptionRow(val id: String, val title: String, val isSelected: Boolean)
+
 /** The chats the car's list offers: pinned ones first, then recent. */
 data class CarChatList(val pinned: List<CarChatRow>, val recent: List<CarChatRow>) {
     val isEmpty: Boolean get() = pinned.isEmpty() && recent.isEmpty()
     val all: List<CarChatRow> get() = pinned + recent
+
+    /** The list with the chat [id] names read (the car's Mark as read), before Hermes confirms it. */
+    fun markingRead(id: String, unread: Boolean = false): CarChatList {
+        fun List<CarChatRow>.marked() = map { if (it.matches(id)) it.copy(unread = unread) else it }
+        return CarChatList(pinned.marked(), recent.marked())
+    }
 }
 
 /** The list shaping of the iOS CarPlayBrowse. */
@@ -312,6 +516,35 @@ object CarBrowse {
         "cron" -> CarChatKind.CRON
         else -> CarChatKind.CHAT
     }
+
+    /** Background Voice Jobs, newest first; a live call's chat turns aren't jobs. */
+    fun jobRows(jobs: List<VoiceBackgroundJob>): List<CarJobRow> =
+        jobs.filter { !it.isThreadTurn }
+            .sortedByDescending { it.startedAtMs }
+            .map { job -> CarJobRow(job.id, job.title, statusText(job.status), CarJobKind.of(job.status), canReplay = !job.status.isActive) }
+
+    fun statusText(status: VoiceBackgroundJob.Status): String = when (status) {
+        VoiceBackgroundJob.Status.Starting, VoiceBackgroundJob.Status.Running -> L10n.tr("Running")
+        VoiceBackgroundJob.Status.NeedsInput -> L10n.tr("Waiting for you")
+        VoiceBackgroundJob.Status.Finished -> L10n.tr("Done")
+        is VoiceBackgroundJob.Status.Failed -> L10n.tr("Failed")
+        VoiceBackgroundJob.Status.Cancelled -> L10n.tr("Cancelled")
+    }
+
+    fun modeRows(current: CarVoiceMode): List<CarModeRow> = CarVoiceMode.entries.map { CarModeRow(it, it.title, it == current) }
+
+    /**
+     * Agents (Hermes profiles) to switch between; empty when there is only
+     * one, so the picker shows no choice that does nothing.
+     */
+    fun agentRows(profiles: List<String>, active: String, displayName: (String) -> String = ::profileDisplayName): List<CarOptionRow> {
+        if (profiles.size <= 1) return emptyList()
+        return profiles.map { CarOptionRow(it, displayName(it), it == active) }
+    }
+
+    /** A profile's name as the phone's voice screen shows it. */
+    fun profileDisplayName(profile: String): String =
+        if (profile == "default") L10n.tr("Default profile") else profile.replace('_', ' ').replaceFirstChar { it.uppercase() }
 
     /** What stands in for the chats while there are none to show yet. */
     fun placeholder(chats: CarChatList, isConnected: Boolean, isLoading: Boolean): String? = when {
