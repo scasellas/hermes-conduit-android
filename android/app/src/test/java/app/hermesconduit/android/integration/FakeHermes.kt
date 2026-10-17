@@ -88,7 +88,7 @@ class FakeHermes : Closeable {
             }
             "hermes_session=abc" !in cookie && path.startsWith("/api/") && path != "/api/ws" -> MockResponse().setResponseCode(401)
             path == "/api/auth/ws-ticket" -> json("""{"ticket":"t-1"}""")
-            path == "/api/profiles" -> json("""{"profiles":["work"]}""")
+            path == "/api/profiles" -> json("""{"profiles":["work",{"name":"lab"}]}""")
             path == "/api/profiles/sessions" -> json("""{"sessions":$sessionsJson,"has_more":false,"total":1}""")
             path.startsWith("/api/sessions/") && path.endsWith("/messages") -> {
                 val id = path.removePrefix("/api/sessions/").removeSuffix("/messages")
