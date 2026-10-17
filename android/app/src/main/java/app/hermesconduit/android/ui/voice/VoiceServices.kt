@@ -175,7 +175,10 @@ class VoiceConversationService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_END) {
-            VoiceHub.peek()?.closeConversation()
+            VoiceHub.peek()?.let { hub ->
+                hub.closeConversation()
+                hub.liveCalls.closeActive()
+            }
             stopSelf()
             return START_NOT_STICKY
         }
@@ -187,7 +190,7 @@ class VoiceConversationService : Service() {
         val notification = VoiceNotifications.builder(this)
             .setSmallIcon(R.mipmap.ic_launcher)
             .setContentTitle(L10n.tr("Voice conversation"))
-            .setContentText(L10n.tr("Classic voice"))
+            .setContentText(intent?.getStringExtra(EXTRA_MODE) ?: L10n.tr("Classic voice"))
             .setContentIntent(VoiceNotifications.openApp(this))
             .setOngoing(true)
             .addAction(end)
@@ -205,9 +208,13 @@ class VoiceConversationService : Service() {
 
     companion object {
         const val ACTION_END = "conduit.voice.end"
+        const val EXTRA_MODE = "conduit.voice.mode"
 
-        fun start(context: Context) {
-            runCatching { context.startForegroundService(Intent(context, VoiceConversationService::class.java)) }
+        /** `mode` names a live call's mode in the notification; null is the classic conversation. */
+        fun start(context: Context, mode: String? = null) {
+            val intent = Intent(context, VoiceConversationService::class.java)
+            if (mode != null) intent.putExtra(EXTRA_MODE, mode)
+            runCatching { context.startForegroundService(intent) }
         }
 
         fun stop(context: Context) {

@@ -209,13 +209,38 @@ data class VoiceProfilePreferences(
     val spokenEndConversationPhrases: List<String>? = null,
     val transcriptionMode: VoiceTranscriptionMode? = null,
     val geminiLiveEnabled: Boolean = false,
+    /** Where Gemini Live's quick lookups search ("automatic", "hermes", "google", "off"); null is automatic. */
+    val geminiLiveSearch: String? = null,
+    /** Gemini Live's prebuilt voice; null is Gemini's default. */
+    val geminiLiveVoice: String? = null,
+    val geminiLiveMemory: Boolean? = null,
+    val geminiLivePersonality: Boolean? = null,
     val gptLiveEnabled: Boolean = false,
+    /** GPT-Live's voice; null is the host's configured voice. */
+    val gptLiveVoice: String? = null,
+    val gptLiveMemory: Boolean? = null,
+    val gptLivePersonality: Boolean? = null,
+    /** "subscription" or "api"; null (or anything unreadable) is the subscription. */
+    val gptLiveBilling: String? = null,
+    val gptLiveAPIVoice: String? = null,
+    val gptLiveAPIHermesCalls: Boolean? = null,
+    val gptLiveAPIMaxMinutes: Int? = null,
     val grokLiveEnabled: Boolean = false,
+    val grokLiveMemory: Boolean? = null,
+    val grokLivePersonality: Boolean? = null,
     val voiceJobModel: String? = null,
     val voiceJobProvider: String? = null,
     val voiceJobReasoningEffort: String? = null,
     val saveVoiceCalls: Boolean? = null,
     val liveVoiceSpeakerBargeIn: Boolean? = null,
+    /** How every live mode sounds (#290): "relaxed", "neutral", "professional"; null keeps the model's own. */
+    val liveVoiceTone: String? = null,
+    val liveVoiceBackchannels: Boolean? = null,
+    /** Null: no greeting. Empty: a greeting in the model's own words. */
+    val liveVoiceGreeting: String? = null,
+    /** "concise", "standard", "detailed"; null is standard. */
+    val liveVoiceAnswerLength: String? = null,
+    val liveVoiceAskBeforeSending: Boolean? = null,
     /** Everything else in the blob, written back untouched. */
     val extra: JsonObject = JsonObject(emptyMap()),
 ) {
@@ -241,13 +266,31 @@ data class VoiceProfilePreferences(
         put("spokenEndConversationPhrases", spokenEndConversationPhrases?.let { list -> JsonArray(list.map(::JsonPrimitive)) })
         put("transcriptionMode", transcriptionMode?.raw?.let(::JsonPrimitive))
         put("geminiLiveEnabled", JsonPrimitive(geminiLiveEnabled))
+        put("geminiLiveSearch", geminiLiveSearch?.let(::JsonPrimitive))
+        put("geminiLiveVoice", geminiLiveVoice?.let(::JsonPrimitive))
+        put("geminiLiveMemory", geminiLiveMemory?.let(::JsonPrimitive))
+        put("geminiLivePersonality", geminiLivePersonality?.let(::JsonPrimitive))
         put("gptLiveEnabled", JsonPrimitive(gptLiveEnabled))
+        put("gptLiveVoice", gptLiveVoice?.let(::JsonPrimitive))
+        put("gptLiveMemory", gptLiveMemory?.let(::JsonPrimitive))
+        put("gptLivePersonality", gptLivePersonality?.let(::JsonPrimitive))
+        put("gptLiveBilling", gptLiveBilling?.let(::JsonPrimitive))
+        put("gptLiveAPIVoice", gptLiveAPIVoice?.let(::JsonPrimitive))
+        put("gptLiveAPIHermesCalls", gptLiveAPIHermesCalls?.let(::JsonPrimitive))
+        put("gptLiveAPIMaxMinutes", gptLiveAPIMaxMinutes?.let(::JsonPrimitive))
         put("grokLiveEnabled", JsonPrimitive(grokLiveEnabled))
+        put("grokLiveMemory", grokLiveMemory?.let(::JsonPrimitive))
+        put("grokLivePersonality", grokLivePersonality?.let(::JsonPrimitive))
         put("voiceJobModel", voiceJobModel?.let(::JsonPrimitive))
         put("voiceJobProvider", voiceJobProvider?.let(::JsonPrimitive))
         put("voiceJobReasoningEffort", voiceJobReasoningEffort?.let(::JsonPrimitive))
         put("saveVoiceCalls", saveVoiceCalls?.let(::JsonPrimitive))
         put("liveVoiceSpeakerBargeIn", liveVoiceSpeakerBargeIn?.let(::JsonPrimitive))
+        put("liveVoiceTone", liveVoiceTone?.let(::JsonPrimitive))
+        put("liveVoiceBackchannels", liveVoiceBackchannels?.let(::JsonPrimitive))
+        put("liveVoiceGreeting", liveVoiceGreeting?.let(::JsonPrimitive))
+        put("liveVoiceAnswerLength", liveVoiceAnswerLength?.let(::JsonPrimitive))
+        put("liveVoiceAskBeforeSending", liveVoiceAskBeforeSending?.let(::JsonPrimitive))
         return JsonObject(map)
     }
 
@@ -256,6 +299,10 @@ data class VoiceProfilePreferences(
             "outputMuted", "continuousConversation", "keepListeningWhenLocked", "spokenStopPhrases",
             "spokenEndConversationPhrases", "transcriptionMode", "geminiLiveEnabled", "gptLiveEnabled", "grokLiveEnabled",
             "voiceJobModel", "voiceJobProvider", "voiceJobReasoningEffort", "saveVoiceCalls", "liveVoiceSpeakerBargeIn",
+            "geminiLiveSearch", "geminiLiveVoice", "geminiLiveMemory", "geminiLivePersonality", "gptLiveVoice", "gptLiveMemory",
+            "gptLivePersonality", "gptLiveBilling", "gptLiveAPIVoice", "gptLiveAPIHermesCalls", "gptLiveAPIMaxMinutes",
+            "grokLiveMemory", "grokLivePersonality", "liveVoiceTone", "liveVoiceBackchannels", "liveVoiceGreeting",
+            "liveVoiceAnswerLength", "liveVoiceAskBeforeSending",
         )
 
         /** Missing keys decode to defaults; uncustomized built-in lists go back to following the app language. */
@@ -276,13 +323,34 @@ data class VoiceProfilePreferences(
                 spokenEndConversationPhrases = end,
                 transcriptionMode = VoiceTranscriptionMode.of(obj["transcriptionMode"].str),
                 geminiLiveEnabled = obj["geminiLiveEnabled"].bool ?: false,
+                // An unknown mode (a newer build's) falls back to automatic.
+                geminiLiveSearch = obj["geminiLiveSearch"].str?.takeIf { it in setOf("automatic", "hermes", "google", "off") },
+                geminiLiveVoice = obj["geminiLiveVoice"].str,
+                geminiLiveMemory = obj["geminiLiveMemory"].bool,
+                geminiLivePersonality = obj["geminiLivePersonality"].bool,
                 gptLiveEnabled = obj["gptLiveEnabled"].bool ?: false,
+                gptLiveVoice = obj["gptLiveVoice"].str,
+                gptLiveMemory = obj["gptLiveMemory"].bool,
+                gptLivePersonality = obj["gptLivePersonality"].bool,
+                // Anything unreadable is the subscription: nothing turns into API billing by accident.
+                gptLiveBilling = obj["gptLiveBilling"].str?.takeIf { it == "subscription" || it == "api" },
+                gptLiveAPIVoice = obj["gptLiveAPIVoice"].str,
+                gptLiveAPIHermesCalls = obj["gptLiveAPIHermesCalls"].bool,
+                gptLiveAPIMaxMinutes = obj["gptLiveAPIMaxMinutes"].long?.toInt(),
                 grokLiveEnabled = obj["grokLiveEnabled"].bool ?: false,
+                grokLiveMemory = obj["grokLiveMemory"].bool,
+                grokLivePersonality = obj["grokLivePersonality"].bool,
                 voiceJobModel = obj["voiceJobModel"].str,
                 voiceJobProvider = obj["voiceJobProvider"].str,
                 voiceJobReasoningEffort = obj["voiceJobReasoningEffort"].str,
                 saveVoiceCalls = obj["saveVoiceCalls"].bool,
                 liveVoiceSpeakerBargeIn = obj["liveVoiceSpeakerBargeIn"].bool,
+                // An unknown tone or length (a newer build's) keeps the defaults.
+                liveVoiceTone = obj["liveVoiceTone"].str?.takeIf { it in setOf("relaxed", "neutral", "professional") },
+                liveVoiceBackchannels = obj["liveVoiceBackchannels"].bool,
+                liveVoiceGreeting = obj["liveVoiceGreeting"].str,
+                liveVoiceAnswerLength = obj["liveVoiceAnswerLength"].str?.takeIf { it in setOf("concise", "standard", "detailed") },
+                liveVoiceAskBeforeSending = obj["liveVoiceAskBeforeSending"].bool,
                 extra = JsonObject(obj.filterKeys { it !in known && obj[it] !is JsonNull }),
             )
         }

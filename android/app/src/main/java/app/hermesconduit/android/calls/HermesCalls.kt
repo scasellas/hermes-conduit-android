@@ -147,7 +147,7 @@ class HermesCalls private constructor(private val context: Context) {
 
     val ringingWanted: Boolean get() = settings.getBool(RINGS_KEY, true)
 
-    val isVoiceInUse: Boolean get() = VoiceHub.peek()?.conversationOpen?.value == true
+    val isVoiceInUse: Boolean get() = VoiceHub.peek()?.let { it.conversationOpen.value || it.liveCalls.isCallActive } == true
 
     private fun callerName(target: HermesCallTarget): String {
         val main = settings.getString(AppSettings.displayNameKey(target.dashboardID ?: dashboardId, "default"), "").ifEmpty { null }
@@ -222,14 +222,15 @@ class HermesCalls private constructor(private val context: Context) {
     }
 
     /**
-     * Readies classic voice for an answered call: its brief is said at the
-     * first listening window. Switch here (`VoiceLaunch`) when a live mode
-     * should take the call with [HermesCallOpening.instructionBlock].
+     * Readies voice for an answered call: classic voice says its brief at
+     * the first listening window; a live mode opens with
+     * [HermesCallOpening.instructionBlock] and its opening turn.
      */
     fun prepareVoice(target: HermesCallTarget): HermesCallOpening? {
         val hub = VoiceHub.get(context)
-        if (hermes.link.value != LinkState.CONNECTED || hub.conversationOpen.value) {
-            HermesCallTrace.note("Voice not opened (connected: ${hermes.link.value == LinkState.CONNECTED}, voice in use: ${hub.conversationOpen.value})")
+        val inUse = hub.conversationOpen.value || hub.liveCalls.isCallActive
+        if (hermes.link.value != LinkState.CONNECTED || inUse) {
+            HermesCallTrace.note("Voice not opened (connected: ${hermes.link.value == LinkState.CONNECTED}, voice in use: $inUse)")
             return null
         }
         hub.jobs.noteCallAnswered(target.call.sessionIDs)
@@ -241,7 +242,9 @@ class HermesCalls private constructor(private val context: Context) {
             sessionIDs = target.call.sessionIDs,
         )
         HermesCallTrace.note("Opening voice (${VoiceLaunch.route(context)})")
-        hub.jobs.queueCallOpening(opening.spokenBrief)
+        // A live mode takes the call with its own brief (instructions and an opening turn); classic voice speaks it.
+        if (hub.liveCalls.enabledMode() != null) hub.liveCalls.pendingHermesCall = opening
+        else hub.jobs.queueCallOpening(opening.spokenBrief)
         return opening
     }
 

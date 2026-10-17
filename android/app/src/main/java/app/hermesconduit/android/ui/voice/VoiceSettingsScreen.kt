@@ -214,12 +214,14 @@ fun VoiceSettingsScreen(onBack: () -> Unit) {
                             grokLiveEnabled = selected == VoiceMode.GROK,
                         )
                     }
+                    // One voice mode at a time: a call of the mode turned off ends.
+                    if (selected != mode) vm.hub.liveCalls.close()
                 }
-                if (mode != VoiceMode.CLASSIC) {
-                    Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
-                        Caption(t("Coming soon"))
-                    }
-                }
+            }
+            LiveVoiceModeSettings(vm, prefs)
+            if (enabled) {
+                VoiceJobModelSection(vm, prefs)
+                if (mode == VoiceMode.CLASSIC) VoiceReplyModelSection(vm)
             }
 
             // Conversation
@@ -294,12 +296,12 @@ fun VoiceSettingsScreen(onBack: () -> Unit) {
 }
 
 @Composable
-private fun Caption(text: String) {
+internal fun Caption(text: String) {
     Text(text, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
 }
 
 @Composable
-private fun Footnote(text: String) {
+internal fun Footnote(text: String) {
     Text(text, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 10.dp))
 }
 
@@ -397,7 +399,7 @@ private fun providerName(providers: List<VoiceProviderConfiguration>, id: String
 
 /** A row that opens a menu of choices. */
 @Composable
-private fun ChoiceRow(label: String, value: String, choices: List<Pair<String, String>>, enabled: Boolean = true, onPick: (String) -> Unit) {
+internal fun ChoiceRow(label: String, value: String, choices: List<Pair<String, String>>, enabled: Boolean = true, onPick: (String) -> Unit) {
     var open by remember { mutableStateOf(false) }
     Box {
         Row(

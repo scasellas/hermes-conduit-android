@@ -73,6 +73,8 @@ dependencies {
     implementation("androidx.biometric:biometric:1.1.0")
     implementation("androidx.fragment:fragment-ktx:1.8.6")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    // GPT-Live calls: one WebRTC peer connection (audio tracks plus the oai-events data channel).
+    implementation("io.github.webrtc-sdk:android:137.7151.05")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.8.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
     implementation("com.mikepenz:multiplatform-markdown-renderer-m3:0.33.0")

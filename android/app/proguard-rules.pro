@@ -6,3 +6,6 @@
 # Tink (used by androidx.security-crypto) references compile-only annotations.
 -dontwarn com.google.errorprone.annotations.**
 -dontwarn javax.annotation.**
+# WebRTC (GPT-Live) is called from native code through JNI.
+-keep class org.webrtc.** { *; }
+-dontwarn org.webrtc.**

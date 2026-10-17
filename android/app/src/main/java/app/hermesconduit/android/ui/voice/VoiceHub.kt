@@ -52,7 +52,12 @@ class VoiceHub private constructor(private val context: Context) {
 
     private val capture = AudioRecordCapture(context, scope)
     private val conversationPlayback = AudioTrackPlayback(context)
-    val audioRoute = VoiceAudioRoute(context).also { route -> route.onRouteChanged = { capture.routeChanged() } }
+    val audioRoute = VoiceAudioRoute(context).also { route ->
+        route.onRouteChanged = {
+            capture.routeChanged()
+            liveCalls.routeChanged()
+        }
+    }
 
     val jobs: VoiceBackgroundJobSupervisor = VoiceBackgroundJobSupervisor(
         scope,
@@ -65,10 +70,23 @@ class VoiceHub private constructor(private val context: Context) {
             cancel = { id -> hermes.rpc("session.interrupt", buildJsonObject { put("session_id", id) }) },
             liveSessions = { profile -> activeSessions(profile) },
             resolveProfile = { name -> resolveJobProfile(name) },
+            threadIsBusy = { thread -> liveCalls.threadIsBusy(thread) },
+            resolveThreadRuntime = { thread -> liveCalls.resolveThreadRuntime(thread) },
+            submitThreadTurn = { thread, runtimeId, text -> liveCalls.submitThreadTurn(thread, runtimeId, text) },
+            redirect = { sessionId, text -> liveCalls.redirect(sessionId, text) },
+            latestThreadReply = { thread -> liveCalls.latestThreadReply(thread) },
+            latestThreadPrompt = { thread -> liveCalls.latestThreadPrompt(thread) },
+            searchChats = { query -> liveCalls.searchChats(query) },
+            readChat = { id -> liveCalls.readChat(id) },
         ),
     ).also { supervisor ->
-        supervisor.onNoticePending = { conversation.deliverPendingBackgroundJobNoticeIfIdle() }
-        supervisor.onJobSessionCreated = { ids -> tagSessions(ids, VoiceSessionTagKind.JOB) }
+        // The open live call takes job updates; otherwise the classic conversation does.
+        supervisor.onNoticePending = { if (!liveCalls.deliverPendingJobUpdates()) conversation.deliverPendingBackgroundJobNoticeIfIdle() }
+        supervisor.onJobSessionCreated = { ids ->
+            val job = supervisor.jobs.value.firstOrNull { job -> ids.any(job::owns) }
+            // A live call's jobs are tagged with its row once the call ends.
+            if (!liveCalls.noteJobSessions(ids, job)) tagSessions(ids, VoiceSessionTagKind.JOB)
+        }
     }
 
     val conversation: VoiceConversationController = VoiceConversationController(
@@ -82,6 +100,9 @@ class VoiceHub private constructor(private val context: Context) {
         },
         backgroundJobs = jobs,
     )
+
+    /** Gemini Live, GPT-Live and Grok Live calls. */
+    val liveCalls: app.hermesconduit.android.ui.voice.live.LiveVoiceCalls = app.hermesconduit.android.ui.voice.live.LiveVoiceCalls(context, this).also { it.bind(jobs) }
 
     private val _capability = MutableStateFlow<VoiceCapabilitySnapshot?>(null)
     /** The active profile's voice capability, refreshed on connect and profile switch. */
@@ -98,6 +119,8 @@ class VoiceHub private constructor(private val context: Context) {
     @Volatile var knownProfiles: List<String> = emptyList()
 
     init {
+        // Hermes may read and propose the voice settings (the agent-settings catalog).
+        VoiceAgentSettings.register(this)
         scope.launch {
             hermes.events.collect { event ->
                 jobs.observe(event)
@@ -111,6 +134,7 @@ class VoiceHub private constructor(private val context: Context) {
                     val gateway = gateway()
                     readAloud.setGateway(gateway)
                     if (_conversationOpen.value) closeConversation()
+                    liveCalls.reset()
                     conversation.setGateway(gateway)
                     conversation.setProfilePreferences(preferences())
                     jobs.reset()
@@ -185,7 +209,8 @@ class VoiceHub private constructor(private val context: Context) {
         if (!hermes.isSignedIn) return L10n.tr("Connect to Hermes before starting voice.")
         if (!isVoiceEnabled()) return VOICE_OFF
         val prefs = preferences()
-        if (prefs.geminiLiveEnabled || prefs.gptLiveEnabled || prefs.grokLiveEnabled) return L10n.tr("Coming soon")
+        // A live mode needs neither Hermes' speech-to-text nor its text-to-speech: its own check runs when the call starts.
+        if (prefs.geminiLiveEnabled || prefs.gptLiveEnabled || prefs.grokLiveEnabled) return null
         val capability = _capability.value ?: return null
         if (prefs.resolvedTranscriptionMode == VoiceTranscriptionMode.HERMES && !capability.supportsTranscription) {
             return capability.unavailableReason ?: L10n.tr("This Hermes profile has no ready speech-to-text provider. Set one up in Settings > Voice.")
@@ -202,6 +227,8 @@ class VoiceHub private constructor(private val context: Context) {
     fun openConversation(host: VoiceConversationHost): String? {
         voiceUnavailableReason()?.let { return it }
         val gateway = gateway() ?: return L10n.tr("Hermes could not prepare a voice conversation.")
+        // No two voice modes share the audio.
+        liveCalls.close()
         conversation.host = host
         conversation.setGateway(gateway)
         if (!conversation.hasLiveVoiceSession) {
@@ -308,7 +335,19 @@ class VoiceHub private constructor(private val context: Context) {
 
     private fun dashboardKey() = hermes.connection.value?.id ?: "-"
 
-    fun pendingVoiceCalls(): Int = _outbox.value.pruned(System.currentTimeMillis()).pending(dashboardKey(), hermes.profile.value).size
+    fun pendingVoiceCalls(): Int = _outbox.value.pruned(System.currentTimeMillis()).pending(dashboardKey(), hermes.profile.value)
+        .count { !liveCalls.isSavingCall(it.request.callId) }
+
+    /** Keeps a live call's unsaved turns on the device (replacing that call's earlier entry). */
+    fun queueVoiceTranscript(entry: VoiceTranscriptOutbox.Entry) {
+        storeOutbox(_outbox.value.pruned(System.currentTimeMillis()).adding(entry))
+    }
+
+    fun dequeueVoiceTranscript(callId: String) {
+        val outbox = _outbox.value
+        if (outbox.entries.none { it.request.callId == callId }) return
+        storeOutbox(VoiceTranscriptOutbox(outbox.entries.filter { it.request.callId != callId }))
+    }
 
     private fun storeOutbox(outbox: VoiceTranscriptOutbox) {
         _outbox.value = outbox
@@ -323,6 +362,8 @@ class VoiceHub private constructor(private val context: Context) {
             var outbox = _outbox.value.pruned(System.currentTimeMillis())
             val client = VoiceHistoryClient(HermesVoiceRequester(hermes, hermes.profile.value))
             for (entry in outbox.pending(dashboardKey(), hermes.profile.value)) {
+                // A running or closing call's own save settles its entry.
+                if (liveCalls.isSavingCall(entry.request.callId)) continue
                 try {
                     val result = client.save(entry.request)
                     _outboxBlocked.value = false

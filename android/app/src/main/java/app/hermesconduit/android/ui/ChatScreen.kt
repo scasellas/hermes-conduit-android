@@ -255,6 +255,7 @@ fun ChatContent(
             chat.clarify?.let { ClarifyCard(it, onAnswer = { answers -> actions.answerClarify(it, answers) }) }
             chat.inputPrompt?.let { InputPromptCard(it, actions::respondInputPrompt) }
             chat.takeover?.let { TakeoverBanner(it, actions) }
+            app.hermesconduit.android.ui.voice.live.MinimisedLiveVoiceBar()
             Composer(
                 chat = chat,
                 enabled = link == LinkState.CONNECTED,
