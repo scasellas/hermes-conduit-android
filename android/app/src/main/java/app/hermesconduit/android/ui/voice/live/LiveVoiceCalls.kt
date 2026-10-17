@@ -246,6 +246,7 @@ class LiveVoiceCalls(private val context: Context, private val hub: VoiceHub) {
                     ) + LiveHostTools.declarations(jobs.hostTools),
                     voice = grokVoice,
                     openSocket = { socket -> OkHttpLiveSocket(hermes.api?.http ?: hermes.baseHttp, socket) },
+                    isHostRefusal = { it is app.hermesconduit.android.net.DashboardHttpException || it is app.hermesconduit.android.net.AuthExpiredException },
                 )
             },
             availability = { grokAvailability() },

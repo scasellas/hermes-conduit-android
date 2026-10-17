@@ -698,13 +698,5 @@ object HermesSpeechFailure {
         return cleaned(raw)
     }
 
-    fun cleaned(raw: String): String {
-        var text = raw
-        for (pattern in listOf(",?\\s*(?<![\\w-])url=(['\"]).*?\\1", "\\b(?:wss?|https?)://\\S+")) {
-            text = Regex(pattern).replace(text, "")
-        }
-        text = text.split(Regex("\\s+")).filter { it.isNotEmpty() }.joinToString(" ")
-        if (text.length <= 240) return text.ifEmpty { L10n.tr("Hermes speech stream failed.") }
-        return text.take(240) + "…"
-    }
+    fun cleaned(raw: String): String = app.hermesconduit.android.core.live.LiveErrorText.cleaned(raw)
 }

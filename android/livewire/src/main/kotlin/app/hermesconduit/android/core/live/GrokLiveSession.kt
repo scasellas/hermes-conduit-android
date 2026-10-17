@@ -28,6 +28,8 @@ class GrokLiveSession(
     private val setupTimeoutMs: Long = 15_000,
     private val responseTimeoutMs: Long = 30_000,
     private val reconnectDelay: suspend (Int) -> Unit = liveReconnectDelay,
+    /** Errors whose own message says why the host refused the connection (the phone's dashboard errors). */
+    private val isHostRefusal: (Throwable) -> Boolean = { false },
 ) : LiveSessionControlling {
     var state: LiveSessionState = LiveSessionState.Idle
         private set(value) {
@@ -417,9 +419,7 @@ class GrokLiveSession(
         if (attempt >= MAXIMUM_RECONNECT_ATTEMPTS) {
             val close = lastSetupClose
             // The dashboard's own reason (signed out, no ticket…), never a network error's.
-            val dashboardReason = error.takeIf {
-                it is app.hermesconduit.android.net.DashboardHttpException || it is app.hermesconduit.android.net.AuthExpiredException || it is IllegalStateException
-            }?.message?.takeIf { it.isNotBlank() }
+            val dashboardReason = error.takeIf { it is IllegalStateException || isHostRefusal(it) }?.message?.takeIf { it.isNotBlank() }
             fail(
                 when {
                     close != null -> L10n.tr("Couldn't connect to Grok Live: %s", close.summary)

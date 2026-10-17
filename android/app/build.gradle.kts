@@ -49,8 +49,9 @@ android {
         compose = true
         buildConfig = true
     }
-    // The phone ↔ watch wire, shared with :wear.
+    // The phone ↔ watch wire and the live voice protocols and sessions, shared with :wear.
     sourceSets["main"].java.srcDir("../wearwire/src/main/kotlin")
+    sourceSets["main"].java.srcDir("../livewire/src/main/kotlin")
 }
 
 dependencies {
