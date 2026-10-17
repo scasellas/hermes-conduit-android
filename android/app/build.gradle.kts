@@ -92,6 +92,9 @@ dependencies {
     implementation("org.apache.commons:commons-compress:1.27.1")
     implementation("com.google.android.gms:play-services-wearable:19.0.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.10.2")
+    // Android Auto: the templated messaging app (chats, the voice screen) next to the notification path.
+    implementation("androidx.car.app:app:1.7.0")
+    implementation("androidx.car.app:app-projected:1.7.0")
     debugImplementation("androidx.compose.ui:ui-tooling")
 
     testImplementation("junit:junit:4.13.2")

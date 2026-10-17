@@ -101,6 +101,15 @@ class VoiceHub private constructor(private val context: Context) {
         backgroundJobs = jobs,
     )
 
+    /**
+     * The classic conversation records from [microphone] (the car's, while
+     * Android Auto runs it) from its next listening window; null goes back to
+     * the phone's.
+     */
+    fun useExternalMicrophone(microphone: app.hermesconduit.android.core.audio.ExternalMicrophone?) {
+        capture.externalMicrophone = microphone
+    }
+
     /** Gemini Live, GPT-Live and Grok Live calls. */
     val liveCalls: app.hermesconduit.android.ui.voice.live.LiveVoiceCalls = app.hermesconduit.android.ui.voice.live.LiveVoiceCalls(context, this).also { it.bind(jobs) }
 

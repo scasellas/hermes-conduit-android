@@ -191,6 +191,18 @@
         <meta-data
             android:name="com.google.android.gms.car.application"
             android:resource="@xml/automotive_app_desc" />
+        <!-- Android Auto: the templated messaging app (iOS CarPlay). ConversationItem needs Car App API level 7. -->
+        <meta-data
+            android:name="androidx.car.app.minCarApiLevel"
+            android:value="7" />
+        <service
+            android:name=".car.ConduitCarAppService"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="androidx.car.app.CarAppService" />
+                <category android:name="androidx.car.app.category.MESSAGING" />
+            </intent-filter>
+        </service>
         <!-- App icon choice (Settings > Appearance): one alias is enabled at a time. -->
         <activity-alias
             android:name=".DarkIcon"

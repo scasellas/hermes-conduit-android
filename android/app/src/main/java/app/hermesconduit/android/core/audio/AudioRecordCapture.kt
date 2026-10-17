@@ -17,6 +17,17 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.launch
 
 /**
+ * A microphone other than the phone's: the car's, through Android Auto
+ * (`CarAudioRecord`). 16 kHz mono PCM16, like the phone capture; `read`
+ * blocks and returns -1 once the microphone is gone.
+ */
+interface ExternalMicrophone {
+    fun start()
+    fun read(buffer: ByteArray, offset: Int, size: Int): Int
+    fun stop()
+}
+
+/**
  * 16 kHz mono PCM16 microphone capture on `AudioRecord` with the
  * VOICE_COMMUNICATION source (the platform's echo canceller and noise
  * suppression), a 5-second pre-roll, and per-frame level events. A reader
@@ -46,6 +57,13 @@ class AudioRecordCapture(
     private val preRoll = Pcm.Ring(Pcm.CAPTURE_SAMPLE_RATE * 2 * PRE_ROLL_SECONDS)
     private val captured = Pcm.Growing()
 
+    /**
+     * Records from this microphone instead of the phone's while set (the car's,
+     * while Android Auto runs the conversation). Takes effect on the next start.
+     */
+    @Volatile var externalMicrophone: ExternalMicrophone? = null
+    private var openExternal: ExternalMicrophone? = null
+
     /** Raw frames as they arrive (for engines that stream them, e.g. live voice). */
     @Volatile var onPcm16Chunk: ((ByteArray) -> Unit)? = null
 
@@ -54,7 +72,7 @@ class AudioRecordCapture(
     override var cancelsEcho: Boolean = false
         private set
 
-    override fun hasPermission() = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+    override fun hasPermission() = externalMicrophone != null || ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
 
     override val recordedPcm16: ByteArray get() = synchronized(lock) { if (activelyRecording) captured.snapshot() else ByteArray(0) }
 
@@ -120,6 +138,7 @@ class AudioRecordCapture(
     @SuppressLint("MissingPermission")
     private fun startIfNeeded() {
         if (running) return
+        externalMicrophone?.let { return startExternal(it) }
         if (!hasPermission()) throw VoiceAudioException(L10n.tr(MICROPHONE_DENIED))
         val minBuffer = AudioRecord.getMinBufferSize(Pcm.CAPTURE_SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
         val audio = try {
@@ -148,13 +167,28 @@ class AudioRecordCapture(
         running = true
         captureGeneration++
         val generation = captureGeneration
-        reader = Thread({ readLoop(audio, generation) }, "conduit-capture").apply { start() }
+        reader = Thread({ readLoop(generation) { buffer -> audio.read(buffer, 0, buffer.size) } }, "conduit-capture").apply { start() }
     }
 
-    private fun readLoop(audio: AudioRecord, generation: Long) {
+    private fun startExternal(microphone: ExternalMicrophone) {
+        try {
+            microphone.start()
+        } catch (e: Exception) {
+            throw VoiceAudioException(L10n.tr("The microphone is not available right now."))
+        }
+        openExternal = microphone
+        // Whatever echo handling the car does, it isn't the platform canceller.
+        cancelsEcho = false
+        running = true
+        captureGeneration++
+        val generation = captureGeneration
+        reader = Thread({ readLoop(generation) { buffer -> microphone.read(buffer, 0, buffer.size) } }, "conduit-capture").apply { start() }
+    }
+
+    private fun readLoop(generation: Long, readInto: (ByteArray) -> Int) {
         val buffer = ByteArray(FRAME_BYTES)
         while (running && captureGeneration == generation) {
-            val read = try { audio.read(buffer, 0, buffer.size) } catch (_: Exception) { -1 }
+            val read = try { readInto(buffer) } catch (_: Exception) { -1 }
             if (read < 0) {
                 if (running && captureGeneration == generation) scope.launch { _events.emit(CaptureEvent.Interrupted(generation)) }
                 break
@@ -181,6 +215,8 @@ class AudioRecordCapture(
         runCatching { noiseSuppressor?.release() }
         echoCanceler = null
         noiseSuppressor = null
+        openExternal?.let { microphone -> runCatching { microphone.stop() } }
+        openExternal = null
         if (audio != null) {
             runCatching { audio.stop() }
             runCatching { audio.release() }
