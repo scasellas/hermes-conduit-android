@@ -24,7 +24,7 @@ Verification so far is JVM unit tests (MockWebServer, fake sockets, protocol vec
 | 14 | Saved dashboards | Ported. | — |
 | 15 | Health | Ported on Health Connect. | Some HealthKit metrics have no Health Connect record type. |
 | 16 | Calendar & phone | Ported (CalendarContract, AlarmClock, DND for Focus). | No system reminders. Alarms can't be read back. "Phone changes" arrive on reconnect rather than by push. |
-| 17 | Location and Maps | Ported (fused location, geofences, Geocoder). | Hermes can't ask for a fresh location on demand (that needs APNs). No on-device routing. |
+| 17 | Location and Maps | Ported (fused location, geofences, Geocoder). | iOS answers Hermes' on-demand locate through an APNs location push. Android instead sends a fresh fix the moment Hermes starts its location or maps tool in a chat on the socket. Maps “Go” confirmations open Maps by themselves from the chat on screen, as on iOS. No on-device routing. |
 | 18 | Bot Mode | Ported. | — |
 | 19 | Group chats | Ported. | — |
 | 20 | Kanban | Ported. | — |

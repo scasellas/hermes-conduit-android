@@ -379,6 +379,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application), Ch
         if (event is StreamEvent.Busy || event is StreamEvent.MessageStart) viewModelScope.launch { refreshLiveStatus() }
         if (event is StreamEvent.Approval) _sessions.update { it.copy(needsApproval = it.needsApproval + event.sessionId) }
         if (event is StreamEvent.RequestCancelled && event.method == "approval") _sessions.update { it.copy(needsApproval = it.needsApproval - event.sessionId) }
+        // iOS answers Hermes' on-demand locate through a location push Android can't receive;
+        // a fresh fix sent as the location tool starts is what the host reads instead.
+        if (event is StreamEvent.ToolStart && (event.name.equals("conduit_location", true) || event.name.equals("conduit_maps", true))) {
+            val context = getApplication<Application>()
+            hermes.scope.launch { runCatching { app.hermesconduit.android.ui.location.LocationSharing.of(context).shareFix(app.hermesconduit.android.model.LocationFixSource.LOCATE) } }
+        }
         val chat = _chat.value
         // A Bot Chat keeps the bot's name; its wire title stays "Bot Chat".
         if (event is StreamEvent.Title && chat.botProfile != null) return
@@ -393,6 +399,13 @@ class AppViewModel(application: Application) : AndroidViewModel(application), Ch
             (event is StreamEvent.ToolComplete && event.name.equals("conduit_present", true))
         ) app.hermesconduit.android.ui.present.PresentedScreens.sync(getApplication())
         if ((event is StreamEvent.ToolComplete && event.name.contains("conduit_settings", true))) app.hermesconduit.android.ui.agentsettings.AgentSettingsSync.sync(getApplication())
+        // Hermes asked to open Maps from the chat on screen; a replay after a reconnect finds its card already complete.
+        if (event is StreamEvent.ToolComplete && event.name.equals("conduit_maps", true)) {
+            val promptId = app.hermesconduit.android.ui.present.PresentedScreens.mapsNavigatePromptId(event.output)
+            val callId = event.toolId?.trim().orEmpty()
+            val replay = chat.messages.any { m -> m.toolCalls.any { it.id == callId && !it.running && it.output != null } }
+            if (promptId != null && callId.isNotEmpty() && !replay) app.hermesconduit.android.ui.present.PresentedScreens.expectMapsNavigate(getApplication(), promptId)
+        }
         if (chat.running && !next.running) next.sessionId?.let { offline.saveTranscript(hermes.connection.value?.id, hermes.profile.value, it, next.title, next.messages) }
         if (chat.running && !next.running) viewModelScope.launch {
             refreshSessions()

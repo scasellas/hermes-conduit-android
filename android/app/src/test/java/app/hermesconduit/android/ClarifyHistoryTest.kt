@@ -46,3 +46,14 @@ class ClarifyHistoryTest {
         assertNull(ClarifyHistoryRecord.from(ToolCall("t", "terminal", null, """{"question":"q","user_response":"a"}""")))
     }
 }
+
+class MapsNavigatePromptTest {
+    @Test
+    fun onlyASentNavigateCounts() {
+        val p = app.hermesconduit.android.ui.present.PresentedScreens
+        org.junit.Assert.assertEquals("p1", p.mapsNavigatePromptId("""{"action":"navigate","status":"sent","prompt_id":"p1"}"""))
+        org.junit.Assert.assertNull(p.mapsNavigatePromptId("""{"action":"navigate","status":"failed","prompt_id":"p1"}"""))
+        org.junit.Assert.assertNull(p.mapsNavigatePromptId("""{"action":"search","status":"sent","prompt_id":"p1"}"""))
+        org.junit.Assert.assertNull(p.mapsNavigatePromptId("not json"))
+    }
+}

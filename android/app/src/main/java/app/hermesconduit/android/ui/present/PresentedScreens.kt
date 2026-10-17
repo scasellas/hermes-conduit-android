@@ -85,6 +85,33 @@ object PresentedScreens {
     private val pendingResults = mutableListOf<Triple<String, String, String>>()
     private val mutex = Mutex()
 
+    /** The Go confirmation a `conduit_maps` result was just seen sending in the open chat, and until when it opens Maps by itself. */
+    @Volatile private var mapsNavigateExpected: Pair<String, Long>? = null
+
+    /** The prompt id a `conduit_maps` answer sent: only a navigate that was sent (iOS `mapsNavigatePromptID`). */
+    fun mapsNavigatePromptId(output: String?): String? {
+        val answer = output?.let { runCatching { kotlinx.serialization.json.Json.parseToJsonElement(it).obj }.getOrNull() } ?: return null
+        if (answer["action"].str != "navigate" || answer["status"].str != "sent") return null
+        return answer["prompt_id"].str?.takeIf { it.isNotEmpty() }
+    }
+
+    /** Hermes asked to open Maps from the chat on screen: fetch the prompt now and open it without waiting for a tap. */
+    fun expectMapsNavigate(context: Context, promptId: String) {
+        mapsNavigateExpected = promptId to System.currentTimeMillis() + 120_000
+        sync(context)
+    }
+
+    /** Opens the expected Go confirmation at once, with Conduit in front and only from the chat being looked at; any other waits for a tap. */
+    private fun openExpectedMaps(context: Context) {
+        val (id, until) = mapsNavigateExpected ?: return
+        if (until < System.currentTimeMillis()) { mapsNavigateExpected = null; return }
+        if (!app.hermesconduit.android.notify.ForegroundState.visible) return
+        val prompt = _prompts.value.firstOrNull { it.id == id && it.mapsTo != null && !it.isExpired() } ?: return
+        if (prompt.sessionId == null || prompt.sessionId !in app.hermesconduit.android.notify.ForegroundState.openSessionIds) return
+        mapsNavigateExpected = null
+        answer(context, prompt, "confirmed", via = "auto")
+    }
+
     fun installationId(context: Context): String {
         val settings = context.appSettings
         return settings.getString("installation_id", "").ifEmpty { UUID.randomUUID().toString().also { settings.set("installation_id", it) } }
@@ -110,6 +137,7 @@ object PresentedScreens {
                 synchronized(pendingResults) { pendingResults.removeAll { it.first in sent } }
                 _prompts.value = response["prompts"].arr?.mapNotNull(PresentedConfirm::from)?.filter { it.id !in sent && !it.isExpired() }.orEmpty()
             }
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) { openExpectedMaps(context) }
         }
     }
 
