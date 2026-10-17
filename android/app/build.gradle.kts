@@ -17,6 +17,19 @@ android {
         versionCode = 1
         versionName = "0.1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        // The wake engine's native libraries (onnxruntime, sherpa-onnx) are large;
+        // 32-bit x86 has no phones worth the extra ~40 MB.
+        ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64") }
+    }
+
+    // One APK per ABI for sideloading (Play builds an App Bundle and splits it itself).
+    splits {
+        abi {
+            isEnable = true
+            reset()
+            include("arm64-v8a", "armeabi-v7a", "x86_64")
+            isUniversalApk = true
+        }
     }
 
     buildTypes {
