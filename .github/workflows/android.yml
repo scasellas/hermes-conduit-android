@@ -24,8 +24,13 @@ jobs:
           distribution: temurin
           java-version: "17"
       - uses: gradle/actions/setup-gradle@v4
-      - name: Unit tests, screenshot checks, lint and debug APK
-        run: ./gradlew :app:testDebugUnitTest :app:verifyPaparazziDebug :app:lintDebug :app:assembleDebug :wear:assembleDebug --console=plain
+      # Separate invocations: everything in one run can exhaust memory during lint.
+      - name: Unit tests and screenshot checks
+        run: ./gradlew :app:testDebugUnitTest :app:verifyPaparazziDebug --console=plain
+      - name: Lint
+        run: ./gradlew :app:lintDebug :wear:lintDebug --console=plain
+      - name: Debug APKs (phone and watch)
+        run: ./gradlew :app:assembleDebug :wear:assembleDebug --console=plain
       # Robolectric: the real Android framework on the JVM, against a fake Hermes. Its own
       # task, with a JVM per test class (see app/build.gradle.kts).
       - name: Integration tests (Robolectric)
@@ -36,6 +41,7 @@ jobs:
           name: conduit-android-debug
           path: |
             android/app/build/outputs/apk/debug/*.apk
+            android/wear/build/outputs/apk/debug/*.apk
             android/app/build/reports/
             android/wear/build/reports/
           if-no-files-found: ignore
