@@ -23,8 +23,10 @@ class MainActivity : ComponentActivity() {
         val app = wearApp
         if (savedInstanceState == null) {
             when {
+                answerRing(intent) -> Unit
                 isTalk(intent) -> request(intent.getStringExtra(EXTRA_SOURCE) ?: "link")
-                app.prefs.callOnOpen.value && !app.call.state.value.isActive -> request("open")
+                // A call from Hermes ringing or answered here: opening the app starts no other call.
+                app.prefs.callOnOpen.value && !app.call.state.value.isActive && !app.hermesCalls.holdsCall -> request("open")
             }
         }
         setContent { WearRoot(talkRequests.intValue, talkSource) }
@@ -33,7 +35,22 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        if (isTalk(intent)) request(intent.getStringExtra(EXTRA_SOURCE) ?: "link")
+        if (!answerRing(intent) && isTalk(intent)) request(intent.getStringExtra(EXTRA_SOURCE) ?: "link")
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // A permission given or taken in the meantime changes whether calls can ring here.
+        wearApp.hermesCalls.sendToken()
+    }
+
+    /** Answer on a call from Hermes ringing here: its call starts, opening with what Hermes called about. */
+    private fun answerRing(intent: Intent?): Boolean {
+        if (intent?.action != HermesWatchCalls.ACTION_ANSWER) return false
+        intent.getStringExtra(HermesWatchCalls.EXTRA_RING)?.let(wearApp.hermesCalls::answer)
+        // Handled once: a recreated activity doesn't answer again.
+        intent.action = null
+        return true
     }
 
     private fun request(source: String) {

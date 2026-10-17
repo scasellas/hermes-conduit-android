@@ -13,11 +13,14 @@ class WearApp : Application() {
     val prefs by lazy { WatchPrefs(this) }
     /** The app's one call, whichever voice runs it. */
     val call by lazy { WatchVoiceCall(this, scope, link, log, prefs) }
+    /** Calls from Hermes ringing here too. */
+    val hermesCalls by lazy { HermesWatchCalls(this, scope, link, log, prefs) { call } }
 
     override fun onCreate() {
         super.onCreate()
         L10n.load(this)
         link.start()
+        hermesCalls.start()
     }
 }
 

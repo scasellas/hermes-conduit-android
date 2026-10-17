@@ -30,10 +30,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.lifecycleScope
 import app.hermesconduit.android.MainActivity
 import app.hermesconduit.android.core.t
 import app.hermesconduit.android.model.HermesCallCopy
 import app.hermesconduit.android.ui.theme.ConduitTheme
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 
 /** The full-screen ringing call, over the lock screen (the CallKit screen's counterpart). */
 class HermesCallActivity : ComponentActivity() {
@@ -51,6 +54,11 @@ class HermesCallActivity : ComponentActivity() {
         if (target == null) {
             finish()
             return
+        }
+        // Answered or declined on the watch, or rung out: the screen goes with the ring.
+        lifecycleScope.launch {
+            HermesCalls.get(this@HermesCallActivity).ringingSession.first { it != target.sessionId }
+            finish()
         }
         val caller = intent.getStringExtra(EXTRA_CALLER) ?: HermesCallCopy.notificationTitle
         val summary = HermesCallCopy.summary(target.call.kind, target.call.title, target.call.reason)

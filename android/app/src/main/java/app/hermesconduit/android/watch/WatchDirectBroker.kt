@@ -2,6 +2,7 @@ package app.hermesconduit.android.watch
 
 import android.content.Context
 import app.hermesconduit.android.appSettings
+import app.hermesconduit.android.calls.HermesCalls
 import app.hermesconduit.android.core.L10n
 import app.hermesconduit.android.core.LinkState
 import app.hermesconduit.android.core.live.GPTLiveBilling
@@ -16,6 +17,7 @@ import app.hermesconduit.android.core.live.LiveDashboardRequest
 import app.hermesconduit.android.core.live.LiveVoiceStyle
 import app.hermesconduit.android.core.live.liveErrorMessage
 import app.hermesconduit.android.hermes
+import app.hermesconduit.android.model.HermesCallOpening
 import app.hermesconduit.android.model.LiveVoiceMode
 import app.hermesconduit.android.model.VoiceTranscriptOutbox
 import app.hermesconduit.android.model.VoiceTranscriptSaveRequest
@@ -63,7 +65,9 @@ import java.util.TimeZone
  *   renews it and ends it with the call;
  * - for GPT-Live, builds the briefing and makes sure the host's WebRTC
  *   runtime is ready;
- * - saves the finished call in voice history.
+ * - saves the finished call in voice history;
+ * - opens a call that answers a call from Hermes (its start's `ring`,
+ *   designs/hermes-calls-watch.md) with what Hermes called about.
  * A call belongs to the Hermes connection (dashboard and profile) it began
  * on, kept across a restart in [WatchDirectCallLedger]; a switch ends it.
  * Nothing lasting goes to the watch: only single-use tokens, the call's
@@ -114,17 +118,29 @@ class WatchDirectBroker private constructor(context: Context) {
     }
 
     /**
+     * A watch call is being set up or served here: a call from Hermes
+     * doesn't ring over it. One the watch hasn't been heard from in
+     * [BUSY_WITHOUT_WORD_MS] (its end was lost) no longer counts.
+     */
+    val hasCall: Boolean get() = callId != null && System.currentTimeMillis() - lastHeardAtMs < BUSY_WITHOUT_WORD_MS
+
+    /**
      * Answers one watch message. [waiting] is false for a queued message
      * (the watch answered the call itself meanwhile): nothing reads the reply.
      */
     suspend fun handle(message: Message, waiting: Boolean): Message? = when (message) {
-        is Message.DirectStart -> start(message.callId, message.version) { prepareDirect(message.callId) }
+        is Message.DirectStart -> start(message.callId, message.version) { prepareDirect(message.callId, message.ring) }
         is Message.BridgeStart -> when {
             message.version != WatchVoiceWire.VERSION || message.engine != WatchAudioBridgeWire.GPT_LIVE ->
                 Message.CallRefused(message.callId, WatchVoiceStartFailure.versionMismatch)
-            else -> start(message.callId, message.version) { prepareBridge(message.callId) }
+            else -> start(message.callId, message.version) { prepareBridge(message.callId, message.ring) }
         }
-        is Message.GrokStart -> start(message.callId, message.version) { prepareGrok(message.callId) }
+        is Message.GrokStart -> start(message.callId, message.version) { prepareGrok(message.callId, message.ring) }
+        is Message.CallsToken -> {
+            // Calls from Hermes ring the watch too, while its voice can start (WatchCallVoices).
+            HermesCalls.get(app).watchRing.tokenChanged(message.token, message.engine)
+            null
+        }
         is Message.DirectTokenRequest -> token(message.callId)
         is Message.DirectTool -> {
             heard(message.callId)
@@ -237,7 +253,7 @@ class WatchDirectBroker private constructor(context: Context) {
     }
 
     /** Builds a watch call's Gemini Live setup as the phone's Gemini Live call is built: the same search, memory and persona lookups. */
-    private suspend fun directPlan(): Plan = coroutineScope {
+    private suspend fun directPlan(opening: HermesCallOpening?): Plan = coroutineScope {
         val connection = preparePhone()
         val prefs = prefs()
         val tokens = hub.liveCalls.tokenClient
@@ -261,11 +277,12 @@ class WatchDirectBroker private constructor(context: Context) {
         // A switch while the lookups ran would mix two connections' setup.
         if (activeConnection != connection) throw PrepareError(WatchVoiceStartFailure.connectionChanged)
         Plan(
-            systemInstruction = GeminiLiveConversationController.instructions(source, mem, persona, style.answerLength, asksFirst = false, onWatch = true) + style.instructions,
+            systemInstruction = GeminiLiveConversationController.instructions(source, mem, persona, style.answerLength, asksFirst = false, onWatch = true) +
+                (opening?.instructionBlock(delegation = false, canAnswer = false) ?: "") + style.instructions,
             functions = GeminiLiveToolBridge.watchDeclarations(webSearch = source == GeminiLiveSearchSource.HERMES, memoryRecall = mem?.canRecall == true, chats = true),
             googleSearch = source == GeminiLiveSearchSource.GOOGLE,
             voice = prefs.geminiLiveVoice,
-            openingPrompt = style.openingPrompt,
+            openingPrompt = opening?.watchOpeningTurn ?: style.openingPrompt,
             token = token,
             connection = connection,
             memoryIncluded = mem != null,
@@ -274,7 +291,7 @@ class WatchDirectBroker private constructor(context: Context) {
     }
 
     /** A watch Grok call's setup, as the phone's Grok Live call is built; xAI's session is on the host, reached through the grant. */
-    private suspend fun grokPlan(): Plan = coroutineScope {
+    private suspend fun grokPlan(opening: HermesCallOpening?): Plan = coroutineScope {
         val connection = preparePhone()
         val prefs = prefs()
         val tokens = hub.liveCalls.tokenClient
@@ -293,11 +310,12 @@ class WatchDirectBroker private constructor(context: Context) {
         Plan(
             // xAI's own search, as on the phone.
             systemInstruction = GeminiLiveConversationController.instructions(GeminiLiveSearchSource.GROK, mem, persona, style.answerLength, asksFirst = false, onWatch = true) +
-                GrokLiveProtocol.grokInstructions(System.currentTimeMillis(), TimeZone.getDefault()) + style.instructions,
+                GrokLiveProtocol.grokInstructions(System.currentTimeMillis(), TimeZone.getDefault()) +
+                (opening?.instructionBlock(delegation = false, canAnswer = false) ?: "") + style.instructions,
             functions = GeminiLiveToolBridge.watchDeclarations(webSearch = false, memoryRecall = mem?.canRecall == true, chats = true),
             googleSearch = false,
             voice = status.voice,
-            openingPrompt = style.openingPrompt,
+            openingPrompt = opening?.watchOpeningTurn ?: style.openingPrompt,
             token = null,
             connection = connection,
             memoryIncluded = mem != null,
@@ -305,19 +323,31 @@ class WatchDirectBroker private constructor(context: Context) {
         )
     }
 
-    private suspend fun prepareDirect(id: Long): Message = prepareSetup(id, grok = false)
+    private suspend fun prepareDirect(id: Long, ring: String?): Message = prepareSetup(id, grok = false, ring)
 
-    private suspend fun prepareGrok(id: Long): Message = prepareSetup(id, grok = true)
+    private suspend fun prepareGrok(id: Long, ring: String?): Message = prepareSetup(id, grok = true, ring)
+
+    /**
+     * What a watch call answering a call from Hermes opens with; null for
+     * any other call, or a ring this phone no longer has (the call then opens
+     * as any other).
+     */
+    private fun hermesCallOpening(ring: String?): HermesCallOpening? {
+        ring ?: return null
+        val calls = HermesCalls.get(app)
+        return calls.answeredOnWatch(ring)?.let(calls::watchOpening)
+    }
 
     /** A Gemini or Grok call: the setup, and a grant for its lookups, jobs and (Gemini) tokens or (Grok) the host's audio bridge. */
-    private suspend fun prepareSetup(id: Long, grok: Boolean): Message {
+    private suspend fun prepareSetup(id: Long, grok: Boolean, ring: String?): Message {
         val kind = if (grok) "watchGrok" else "watchDirect"
         beginPreparing(id)
         hub.jobs.liveCallReadsReplies = true
         val startedAt = System.currentTimeMillis()
-        log.note("${kind}Start", mapOf("callID" to id, "connected" to (hermes.link.value == LinkState.CONNECTED)))
+        val opening = hermesCallOpening(ring)
+        log.note("${kind}Start", mapOf("callID" to id, "connected" to (hermes.link.value == LinkState.CONNECTED), "answersHermesCall" to (ring != null), "opening" to (opening != null)))
         return try {
-            val plan = if (grok) grokPlan() else directPlan()
+            val plan = if (grok) grokPlan(opening) else directPlan(opening)
             if (callId != id) return Message.CallRefused(id, WatchVoiceStartFailure.ended)
             connection = plan.connection
             ledger.begin(id, plan.connection, saveCalls())
@@ -373,10 +403,14 @@ class WatchDirectBroker private constructor(context: Context) {
      * opens the host's audio bridge, with jobs for GPT-Live's delegations as
      * the user allows and web_search for when they don't.
      */
-    private suspend fun prepareBridge(id: Long): Message {
+    private suspend fun prepareBridge(id: Long, ring: String?): Message {
         beginPreparing(id)
         val startedAt = System.currentTimeMillis()
-        log.note("watchBridgeStart", mapOf("callID" to id, "engine" to WatchAudioBridgeWire.GPT_LIVE, "connected" to (hermes.link.value == LinkState.CONNECTED)))
+        val opening = hermesCallOpening(ring)
+        log.note("watchBridgeStart", mapOf(
+            "callID" to id, "engine" to WatchAudioBridgeWire.GPT_LIVE, "connected" to (hermes.link.value == LinkState.CONNECTED),
+            "answersHermesCall" to (ring != null), "opening" to (opening != null),
+        ))
         return try {
             val connection = preparePhone()
             val prefs = prefs()
@@ -392,7 +426,8 @@ class WatchDirectBroker private constructor(context: Context) {
             if (callId != id) return Message.CallRefused(id, WatchVoiceStartFailure.ended)
             val chats = runCatching { PluginStatusRepository.of(hermes).status(force = false).reports(WatchToolAnswer.CHAT_CAPABILITY) }.getOrDefault(false)
             val style = LiveVoiceStyle.of(prefs)
-            val briefing = GPTLiveConversationController.briefing(memory, personality, style.answerLength, onWatch = true, watchChats = chats) + style.instructions
+            val briefing = GPTLiveConversationController.briefing(memory, personality, style.answerLength, onWatch = true, watchChats = chats) +
+                (opening?.instructionBlock(delegation = true, canAnswer = false) ?: "") + style.instructions
             if (activeConnection != connection) throw PrepareError(WatchVoiceStartFailure.connectionChanged)
             this.connection = connection
             ledger.begin(id, connection, saveCalls())
@@ -420,7 +455,9 @@ class WatchDirectBroker private constructor(context: Context) {
             if (activeConnection != connection) throw PrepareError(WatchVoiceStartFailure.connectionChanged)
             val (packed, bytes) = WatchVoiceWire.BridgeSession.pack(briefing)
             val reply = Message.BridgeSessionIssued(id, WatchVoiceWire.BridgeSession(
-                WatchAudioBridgeWire.GPT_LIVE, grant, packed, bytes, style.greeting, prefs.gptLiveVoice, prefs.resolvedSpokenEndConversationPhrases, null,
+                // A call Hermes made opens with its brief instead of a greeting.
+                WatchAudioBridgeWire.GPT_LIVE, grant, packed, bytes, if (opening == null) style.greeting else null, prefs.gptLiveVoice,
+                prefs.resolvedSpokenEndConversationPhrases, opening?.watchOpeningTurn,
             ))
             val replyBytes = WatchVoiceWire.encode(reply).size
             if (replyBytes > REPLY_LIMIT) throw PrepareError(L10n.tr("The call's briefing (memory and persona) is too large to send to the Watch."))
@@ -888,6 +925,7 @@ class WatchDirectBroker private constructor(context: Context) {
         const val CONNECT_WAIT_MS = 8_000L
         /** A call not heard from this long is over, whatever its end said. */
         const val SILENCE_LIMIT_MS = 30 * 60 * 1000L
+        const val BUSY_WITHOUT_WORD_MS = 10 * 60 * 1000L
         /** How long a start waits for Hermes to make GPT-Live's WebRTC runtime. */
         const val RUNTIME_WAIT_MS = 8_000L
         /** Start_job calls kept in memory for their repeats. */

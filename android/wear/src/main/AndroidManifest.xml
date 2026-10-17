@@ -12,6 +12,8 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <!-- A call from Hermes rings full screen, as a phone call does. -->
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
 
     <queries>
         <intent>
@@ -61,6 +63,29 @@
             </intent-filter>
             <meta-data android:name="android.app.shortcuts" android:resource="@xml/shortcuts" />
         </activity>
+
+        <!-- A call from Hermes ringing here too. -->
+        <activity
+            android:name=".HermesCallActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:launchMode="singleTop"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.DeviceDefault" />
+
+        <receiver
+            android:name=".HermesCallReceiver"
+            android:exported="false" />
+
+        <!-- The phone's rings and stops for calls from Hermes (WearWire.RING, RING_SETTLED). -->
+        <service
+            android:name=".HermesRingService"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.google.android.gms.wearable.MESSAGE_RECEIVED" />
+                <data android:scheme="wear" android:host="*" android:pathPrefix="/conduit/ring" />
+            </intent-filter>
+        </service>
 
         <service
             android:name=".CallService"

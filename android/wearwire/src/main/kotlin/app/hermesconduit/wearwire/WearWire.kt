@@ -45,6 +45,12 @@ object WearWire {
     const val APPROVALS = "/conduit/approvals"
     const val APPROVAL_RESPOND = "/conduit/approvals/respond"
     const val APPROVAL_RESULT = "/conduit/approvals/result"
+    /** A call from Hermes ringing the watch too, phone → watch ([HermesRingLedger]). */
+    const val RING = "/conduit/ring"
+    /** The phone's stop: the ring was answered or declined there. */
+    const val RING_SETTLED = "/conduit/ring/settled"
+    /** The watch answered or declined: a request, answered with a [HermesRingSettleResult]. */
+    const val RING_SETTLE = "/conduit/ring/settle"
 
     /** DataItem the phone keeps current: [PhoneContext]. */
     const val CONTEXT = "/conduit/context"
@@ -122,6 +128,8 @@ data class PhoneContext(
     val updatedAtMs: Long = 0,
     /** Each watch voice's last check on this profile ([WatchCallVoices]); one not checked yet is missing. */
     val voices: Map<String, Boolean> = emptyMap(),
+    /** Calls from Hermes ring the phone: the watch says its own voice keeps them off the watch only then (iOS WatchPhoneContext.callsRing). */
+    val callsRing: Boolean = false,
 ) {
     /** Whether [voice] is known not to start. */
     fun notSetUp(voice: String): Boolean = voices[voice] == false
@@ -130,6 +138,7 @@ data class PhoneContext(
         put("v", version); put("signed_in", signedIn); put("connected", connected)
         put("voice_approvals", voiceApprovals); put("profile", profile); put("updated_at_ms", updatedAtMs)
         if (voices.isNotEmpty()) put("voices", buildJsonObject { voices.forEach { (k, v) -> put(k, v) } })
+        put("calls_ring", callsRing)
     }
 
     fun encoded(): String = toJson().toString()
@@ -145,6 +154,7 @@ data class PhoneContext(
                 version = o.i("v") ?: 1,
                 updatedAtMs = o.l("updated_at_ms") ?: 0,
                 voices = (o["voices"] as? JsonObject)?.mapNotNull { (k, v) -> (v as? JsonPrimitive)?.booleanOrNull?.let { k to it } }?.toMap().orEmpty(),
+                callsRing = o.b("calls_ring") ?: false,
             )
         }.getOrNull()
     }
@@ -225,7 +235,35 @@ sealed class WearMessage {
         }
     }
 
+    /**
+     * A call from Hermes ringing on the phone, which rings the watch too
+     * (iOS: the relay's call push to the Watch). [callerName] is who the call
+     * says is calling (HermesCallerName's line), as the phone shows it.
+     */
+    data class Ring(val id: String, val callerName: String, val sentAtMs: Long?) : WearMessage() {
+        override val path get() = WearWire.RING
+        override fun body() = buildJsonObject {
+            put("v", WearWire.VERSION); put("id", id); put("caller", callerName)
+            sentAtMs?.let { put("sent_at_ms", it) }
+        }
+    }
+
+    /** The watch's settle (iOS HermesRingSettler.request, without the token: the link is the watch's own). */
+    data class RingSettle(val id: String, val by: HermesRingDevice, val outcome: HermesRingOutcome) : WearMessage() {
+        override val path get() = WearWire.RING_SETTLE
+        override fun body() = buildJsonObject { put("id", id); put("by", by.raw); put("outcome", outcome.raw) }
+    }
+
+    /** The stop: the other device answered or declined (iOS HermesRingSettled). */
+    data class RingSettled(val id: String, val outcome: HermesRingOutcome, val by: HermesRingDevice) : WearMessage() {
+        override val path get() = WearWire.RING_SETTLED
+        override fun body() = buildJsonObject { put("id", id); put("settled", outcome.raw); put("by", by.raw) }
+    }
+
     companion object {
+        /** Who calls when nothing names the caller (iOS HermesCallerName.fallback). */
+        const val CALLER_FALLBACK = "Hermes"
+
         internal fun from(path: String, o: JsonObject): WearMessage? = parse(path, o)
 
         private fun parse(path: String, o: JsonObject): WearMessage? {
@@ -258,6 +296,21 @@ sealed class WearMessage {
                 else ApprovalRespond(o.s("session_id")?.takeIf { it.isNotEmpty() } ?: return null, o.s("request_id").orEmpty(), choice)
             }
             WearWire.APPROVAL_RESULT -> ApprovalResult(o.s("session_id").orEmpty(), o.s("request_id").orEmpty(), o.b("ok") ?: false, o.s("error"))
+            WearWire.RING -> {
+                val id = o.s("id")?.takeIf(HermesRingIds::isID) ?: return null
+                if ((o.i("v") ?: 1) > WearWire.VERSION) null
+                else Ring(id, o.s("caller")?.takeIf { it.isNotBlank() } ?: CALLER_FALLBACK, o.l("sent_at_ms"))
+            }
+            WearWire.RING_SETTLE -> RingSettle(
+                o.s("id")?.takeIf(HermesRingIds::isID) ?: return null,
+                HermesRingDevice.of(o.s("by")) ?: return null,
+                HermesRingOutcome.of(o.s("outcome")) ?: return null,
+            )
+            WearWire.RING_SETTLED -> RingSettled(
+                o.s("id")?.takeIf(HermesRingIds::isID) ?: return null,
+                HermesRingOutcome.of(o.s("settled")) ?: return null,
+                HermesRingDevice.of(o.s("by")) ?: return null,
+            )
             else -> null
             }
         }
@@ -308,6 +361,15 @@ data class WatchCallVoices(
         const val GEMINI_LIVE = "geminiLive"
         const val GPT_LIVE = "gptLive"
         const val GROK_LIVE = "grokLive"
+        /** Android's turn-by-turn voice through the phone: it can't open with a call from Hermes, so calls don't ring the watch on it. */
+        const val PHONE = "phone"
+
+        /**
+         * Whether a call from Hermes rings the watch whose voice is [engine]
+         * (iOS WatchCallVoices.rings): a watch that doesn't say (null) and a
+         * voice not checked yet both ring.
+         */
+        fun rings(engine: String?, ready: Map<String, Boolean>): Boolean = engine == null || (ready[engine] ?: true)
 
         fun decode(text: String?): WatchCallVoices = runCatching {
             val o = WearWire.json.parseToJsonElement(text ?: return WatchCallVoices()) as JsonObject

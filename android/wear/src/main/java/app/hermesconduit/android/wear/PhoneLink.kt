@@ -2,6 +2,7 @@ package app.hermesconduit.android.wear
 
 import android.content.Context
 import android.net.Uri
+import app.hermesconduit.wearwire.HermesRingSettleResult
 import app.hermesconduit.wearwire.PhoneContext
 import app.hermesconduit.wearwire.WatchVoiceWire
 import app.hermesconduit.wearwire.WearMessage
@@ -130,6 +131,20 @@ class PhoneLink(private val context: Context, private val scope: CoroutineScope)
         if (reply.isEmpty()) return null
         return WatchVoiceWire.decode(reply) ?: throw java.io.IOException(L10n.tr("Conduit on the phone sent something this Watch app can't read."))
     }
+
+    /**
+     * Settles a call from Hermes that rang on both (iOS HermesRingSettler.settle):
+     * the phone answers as the relay does. Failed when it can't be reached in time.
+     */
+    suspend fun settleRing(settle: WearMessage.RingSettle, timeoutMs: Long = 10_000): HermesRingSettleResult {
+        val node = phone ?: run { refresh(); phone } ?: return HermesRingSettleResult.Failed
+        val (path, bytes) = WearWire.encode(settle)
+        val reply = runCatching { withTimeoutOrNull(timeoutMs) { messages.sendRequest(node.id, path, bytes).await() } }.getOrNull()
+        return HermesRingSettleResult.decode(reply)
+    }
+
+    /** This watch's node id, which the phone rings calls from Hermes on; null when the Data Layer can't say. */
+    suspend fun localNodeId(): String? = runCatching { Wearable.getNodeClient(context).localNode.await().id }.getOrNull()
 
     /** Queues a live call's message for the phone (its end, a job): it arrives whenever Conduit next runs there. */
     fun queue(message: WatchVoiceWire.Message): Boolean {
