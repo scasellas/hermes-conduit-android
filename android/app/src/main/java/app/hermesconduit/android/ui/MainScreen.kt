@@ -225,7 +225,7 @@ fun SessionDrawerContent(
             Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp),
             horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            val sources = sessions.sessions.map { it.sourceKind }.distinct().filter { it != "chat" }
+            val sources = sessions.sessions.map { sessions.category(it) }.distinct().filter { it != "chat" }
             (sessionFilters + sources.map { "source.$it" }).forEach { filter ->
                 androidx.compose.material3.FilterChip(
                     selected = sessions.filter == filter,
@@ -239,7 +239,7 @@ fun SessionDrawerContent(
             Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp))
         }
         val visible = sessions.visible
-        val nested = remember(visible) { nestSessions(visible) }
+        val nested = remember(sessions) { sessions.nested }
         LazyColumn(Modifier.weight(1f)) {
             if (visible.isEmpty() && !sessions.loading) {
                 item {
@@ -447,21 +447,8 @@ fun filterTitle(filter: String): String = when (filter) {
 }
 
 /** Children (branches, delegations) under their parent when both are listed, like iOS SessionNesting. */
-fun nestSessions(sessions: List<SessionSummary>): List<Pair<SessionSummary, Int>> {
-    val byId = sessions.associateBy { it.id }
-    val children = sessions.filter { s -> s.parentId != null && byId.containsKey(s.parentId) && s.parentId != s.id }.groupBy { it.parentId!! }
-    val childIds = children.values.flatten().map { it.id }.toSet()
-    val result = mutableListOf<Pair<SessionSummary, Int>>()
-    fun add(s: SessionSummary, depth: Int, seen: MutableSet<String>) {
-        if (!seen.add(s.id)) return
-        result += s to depth
-        children[s.id]?.forEach { add(it, minOf(depth + 1, 3), seen) }
-    }
-    val seen = mutableSetOf<String>()
-    sessions.filter { it.id !in childIds }.forEach { add(it, 0, seen) }
-    sessions.filter { it.id !in seen }.forEach { add(it, 0, seen) }
-    return result
-}
+fun nestSessions(sessions: List<SessionSummary>): List<Pair<SessionSummary, Int>> =
+    app.hermesconduit.android.model.SessionNesting.group(sessions) { it.parentId }
 
 private var appViewModelMove: (SessionSummary, String) -> Unit = { _, _ -> }
 

@@ -61,7 +61,57 @@ data class SessionsState(
     val scheduled: List<SessionSummary>? = null,
     /** Showing the on-disk copy because the dashboard couldn't be reached. */
     val offline: Boolean = false,
+    /** The profile's voice tags by session id (PLUGIN/voice/tags). */
+    val voiceTags: Map<String, app.hermesconduit.android.model.VoiceSessionTag> = emptyMap(),
+    /** Saved call session id → the chat it was started from (this device's call-chat links). */
+    val callChats: Map<String, String> = emptyMap(),
 ) {
+    fun voiceTag(session: SessionSummary): app.hermesconduit.android.model.VoiceSessionTag? =
+        if (voiceTags.isEmpty()) null else app.hermesconduit.android.model.SessionNesting.nestingIds(session).firstNotNullOfOrNull { voiceTags[it] }
+
+    /** The filter a row is filed under: its voice tag's, else its Hermes source. */
+    fun category(session: SessionSummary): String = when (voiceTag(session)?.kind) {
+        app.hermesconduit.android.model.VoiceSessionTagKind.JOB -> "voice_job"
+        null -> session.sourceKind
+        else -> "voice"
+    }
+
+    /** The row's second line when voice says more than the model: a saved call's engine, or the call a job came from. */
+    fun voiceDetail(session: SessionSummary): String? {
+        val tag = voiceTag(session) ?: return null
+        return when (tag.kind) {
+            app.hermesconduit.android.model.VoiceSessionTagKind.CALL -> when (tag.engine) {
+                "gemini-live" -> L10n.tr("Gemini Live")
+                "gpt-live" -> L10n.tr("GPT-Live")
+                "grok-live" -> L10n.tr("Grok Live")
+                else -> L10n.tr("Voice call")
+            }
+            app.hermesconduit.android.model.VoiceSessionTagKind.JOB -> {
+                val parent = tag.parentId?.let { id -> sessions.firstOrNull { it.matches(id) } }?.title ?: tag.parentTitle
+                parent?.let { L10n.tr("From %s", it) }
+            }
+            else -> null
+        }
+    }
+
+    /** The row as the drawer shows it: filed by voice tag, with the voice detail in place of the model. */
+    private fun presented(session: SessionSummary): SessionSummary {
+        if (voiceTags.isEmpty()) return session
+        val category = category(session)
+        val detail = voiceDetail(session)
+        return if (category == session.sourceKind && detail == null) session else session.copy(sourceKind = category, model = detail ?: session.model)
+    }
+
+    /** The drawer's rows: nested while browsing, flat while searching or narrowing by status. */
+    val nested: List<Pair<SessionSummary, Int>>
+        get() {
+            val rows = visible
+            if (!app.hermesconduit.android.model.SessionNesting.shouldGroup(query, filter in setOf("unread", "needsApproval", "running"))) return rows.map { it to 0 }
+            return app.hermesconduit.android.model.SessionNesting.group(rows) { session ->
+                app.hermesconduit.android.model.SessionNesting.parentKey(session, voiceTag(session)) { ids -> ids.firstNotNullOfOrNull { callChats[it] } }
+            }
+        }
+
     fun statusOf(session: SessionSummary): String? =
         (session.alternateIds + session.id).firstNotNullOfOrNull { liveStatus[it] }
 
@@ -74,7 +124,7 @@ data class SessionsState(
             val base = when {
                 filter == "scheduled" -> scheduled.orEmpty()
                 else -> sessions
-            }
+            }.map(::presented)
             val filtered = when {
                 filter == "unread" -> base.filter { it.unread }
                 filter == "needsApproval" -> base.filter { needsApproval(it) }
@@ -428,6 +478,21 @@ class AppViewModel(application: Application) : AndroidViewModel(application), Ch
 
     // endregion
 
+    /** Files voice rows under Voice / Voice Jobs and nests them; an older plugin has no tags and rows stay under their source. */
+    private fun refreshVoiceTags(profile: String) {
+        viewModelScope.launch {
+            val hub = app.hermesconduit.android.ui.voice.VoiceHub.peek()
+            val links = hub?.liveCalls?.chatLinks?.value?.links.orEmpty()
+                .filter { it.profile == profile && it.callSessionId.isNotEmpty() }
+            val callChats = links.mapNotNull { link -> link.chatSessionId?.let { link.callSessionId to it } }.toMap()
+            val tags = runCatching {
+                app.hermesconduit.android.ui.voice.VoiceHistoryClient(app.hermesconduit.android.ui.voice.HermesVoiceRequester(hermes, profile)).tags()
+            }.getOrNull()
+            if (hermes.profile.value != profile) return@launch
+            _sessions.update { it.copy(voiceTags = tags ?: it.voiceTags, callChats = callChats) }
+        }
+    }
+
     private suspend fun refreshSessions() {
         _sessions.update { it.copy(loading = true, error = null) }
         try {
@@ -446,6 +511,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application), Ch
                 .sortedWith(compareByDescending<SessionSummary> { it.pinned }.thenByDescending { it.lastActiveMs ?: 0 })
             _sessions.update { it.copy(sessions = sorted, loading = false, error = null, offline = false) }
             offline.saveSessions(hermes.connection.value?.id, profile, sorted)
+            refreshVoiceTags(profile)
             app.hermesconduit.android.widget.WidgetData.refresh(getApplication())
         } catch (e: AuthExpiredException) {
             _sessions.update { it.copy(loading = false) }
