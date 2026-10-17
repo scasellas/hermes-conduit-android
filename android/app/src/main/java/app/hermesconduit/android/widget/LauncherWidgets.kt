@@ -4,9 +4,11 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.glance.GlanceId
 import androidx.glance.GlanceModifier
 import androidx.glance.GlanceTheme
@@ -20,8 +22,10 @@ import androidx.glance.appwidget.GlanceAppWidgetReceiver
 import androidx.glance.appwidget.action.actionStartActivity
 import androidx.glance.appwidget.cornerRadius
 import androidx.glance.appwidget.provideContent
+import androidx.glance.appwidget.state.updateAppWidgetState
 import androidx.glance.appwidget.updateAll
 import androidx.glance.background
+import androidx.glance.currentState
 import androidx.glance.layout.Alignment
 import androidx.glance.layout.Column
 import androidx.glance.layout.Row
@@ -83,9 +87,18 @@ object WidgetData {
         return WidgetModel(dashboard?.displayName.orEmpty(), if (profile == "default") "" else profile, title, resume)
     }
 
+    /** Bumped by [refresh]: a widget's running Glance session recomposes on it (provideGlance runs once per session). */
+    val REFRESHED = longPreferencesKey("conduit.widget.refreshed")
+
     suspend fun refresh(context: Context) {
-        runCatching { NativeWidget().updateAll(context) }
-        runCatching { CharacterWidget().updateAll(context) }
+        listOf(NativeWidget(), CharacterWidget()).forEach { widget ->
+            runCatching {
+                GlanceAppWidgetManager(context).getGlanceIds(widget.javaClass).forEach { id ->
+                    updateAppWidgetState(context, id) { it[REFRESHED] = System.currentTimeMillis() }
+                }
+                widget.updateAll(context)
+            }
+        }
     }
 }
 
@@ -136,16 +149,22 @@ private fun LauncherContent(context: Context, model: WidgetModel, character: Boo
 class NativeWidget : GlanceAppWidget() {
     override suspend fun provideGlance(context: Context, id: GlanceId) {
         val widgetId = GlanceAppWidgetManager(context).getAppWidgetId(id)
-        val model = WidgetData.model(context, widgetId)
-        provideContent { GlanceTheme { LauncherContent(context, model, character = false) } }
+        provideContent {
+            val refreshed = currentState(WidgetData.REFRESHED)
+            val model = remember(refreshed) { WidgetData.model(context, widgetId) }
+            GlanceTheme { LauncherContent(context, model, character = false) }
+        }
     }
 }
 
 class CharacterWidget : GlanceAppWidget() {
     override suspend fun provideGlance(context: Context, id: GlanceId) {
         val widgetId = GlanceAppWidgetManager(context).getAppWidgetId(id)
-        val model = WidgetData.model(context, widgetId)
-        provideContent { GlanceTheme { LauncherContent(context, model, character = true) } }
+        provideContent {
+            val refreshed = currentState(WidgetData.REFRESHED)
+            val model = remember(refreshed) { WidgetData.model(context, widgetId) }
+            GlanceTheme { LauncherContent(context, model, character = true) }
+        }
     }
 }
 
