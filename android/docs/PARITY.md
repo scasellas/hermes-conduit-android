@@ -4,7 +4,7 @@ This file tracks how each section of [`IOS_FEATURE_INVENTORY.md`](IOS_FEATURE_IN
 
 **Platform gaps** are places where Android has no equivalent API, so the port uses the closest Android mechanism. They are listed on purpose and are not missing work.
 
-Verification so far is JVM unit tests (MockWebServer, fake sockets, protocol vectors) and Paparazzi screenshots. Nothing has been run on a device or emulator yet.
+Verification: JVM unit tests (protocol vectors, fake sockets, MockWebServer), Paparazzi screenshots, and Robolectric integration tests (`:app:integrationTestDebug`, `:wear:testDebugUnitTest`). The Robolectric tests drive the real activities, services, receivers, notifications and widgets against a fake Hermes server: sign-in, chat, streaming, approvals, background notifications with Reply, calls from Hermes, Send to Hermes, deep links and share, language, theme and icon switching, Glance widgets, and the watch's home and ringing screens. Hardware paths (microphone, speaker, WebRTC, Health Connect data, car head unit, Data Layer) still need a real device.
 
 | # | Area | Status | Platform gaps / Android differences |
 |---|------|--------|-------------------------------------|
