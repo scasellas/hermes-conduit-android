@@ -41,6 +41,8 @@ android {
         compose = true
         buildConfig = true
     }
+    // Robolectric tests read the merged manifest and resources.
+    testOptions { unitTests.isIncludeAndroidResources = true }
 }
 
 dependencies {
@@ -69,4 +71,17 @@ dependencies {
     // The direct call's sockets (Gemini Live, the host's audio bridge) and the relay's tool calls.
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     debugImplementation("androidx.compose.ui:ui-tooling")
+
+    // Robolectric: the watch screens and ringing on the real framework, on the JVM.
+    testImplementation(composeBom)
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.robolectric:robolectric:4.17")
+    testImplementation("androidx.test:core-ktx:1.7.0")
+    testImplementation("androidx.test.ext:junit-ktx:1.3.0")
+    testImplementation("androidx.compose.ui:ui-test-junit4")
+    debugImplementation("androidx.compose.ui:ui-test-manifest")
 }
+
+// A fresh JVM per test class: the watch app keeps per-process state (its
+// Application's lazies, androidx singletons) that Robolectric can't reset.
+tasks.withType<Test>().configureEach { forkEvery = 1 }
