@@ -510,7 +510,7 @@ Files: `Views/CapabilitiesView.swift` (206), `Views/Capabilities/CapabilityCompo
     - The phone's `watch/WatchDirectBroker` builds each setup or briefing, mints tokens, runs tool calls on `GeminiLiveToolBridge`, answers job polls, asks for, renews and revokes the grant (and GPT-Live's WebRTC runtime), keeps `WatchDirectCallLedger` across restarts and saves the call to voice history.
     - Settings > Watch: jobs per Watch call (0–20), Approve from the Watch, GPT-Live on the Watch (status and Set up).
     - Wire: `WatchVoiceWire` (Swift Codable JSON) as Data Layer requests on `/conduit/wv` (MessageClient.sendRequest, answered in `WatchBridgeService.onRequest`) and queued DataItems under `/conduit/wvq/`; the relay sealing (`WatchToolSeal`, `WatchAudioBridgeWire`) is checked against the plugin's test vectors. The Gemini/Grok/GPT-Live protocols and sessions moved to `android/livewire`, compiled into both apps.
-  - Not ported: calls from Hermes ringing on the watch (HermesWatchCalls, HermesRingHandoff: the `ring` field stays empty) and the watchOS-only audio-session reactivation (FB24377808), path monitor and timeline logging. Wear OS has no Control widget; the tile is its counterpart, and the complication covers the iOS families.
+  - Calls from Hermes ring the watch (HermesWatchCalls, HermesRingHandoff ported over the Data Layer; the phone keeps the ring record the relay keeps on iOS). Not ported: the watchOS-only audio-session reactivation (FB24377808), path monitor and timeline logging. Wear OS has no Control widget; the tile is its counterpart, and the complication covers the iOS families.
 
 ## 27. CarPlay (Android analog: Android Auto)
 

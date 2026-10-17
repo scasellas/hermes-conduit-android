@@ -33,7 +33,7 @@ Verification so far is JVM unit tests (MockWebServer, fake sockets, protocol vec
 | 23 | Ask Hermes About Screen | Ported via the assistant (VoiceInteractionService), the share sheet and PROCESS_TEXT. | — |
 | 24 | Shortcuts / App Intents | Send to Hermes: an automation intent and broadcast, opt-in. Start voice: `conduit://voice` and a launcher shortcut. Quick Settings tile. | No Focus filter API. |
 | 25 | Widgets | Ported (Glance, native and character). | — |
-| 26 | Apple Watch → Wear OS | Ported: bridge call, direct Gemini Live with the phone broker, Grok/GPT-Live bridge, engine picker, tile, complication, call log, approvals, Watch settings. | watchOS-only audio workarounds don't apply. Ringing for calls from Hermes on the watch: see the inventory §26. |
+| 26 | Apple Watch → Wear OS | Ported: bridge call, direct Gemini Live with the phone broker, Grok/GPT-Live bridge, engine picker, tile, complication, call log, approvals, Watch settings. | Calls from Hermes ring the watch too (the phone settles the ring over the Data Layer instead of the relay). watchOS-only audio workarounds and the CallKit relay handoff don't apply. |
 | 27 | CarPlay → Android Auto | MessagingStyle notifications with voice reply and mark-as-read. | Android Auto allows third-party chat apps only through notifications, so there are no browse or voice templates. |
 | 28 | Offline chat cache | Ported. | — |
 | 29 | Theming, glow, haptics | Ported. | — |
