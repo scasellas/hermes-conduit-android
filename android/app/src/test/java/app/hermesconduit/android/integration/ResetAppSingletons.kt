@@ -3,43 +3,44 @@ package app.hermesconduit.android.integration
 import org.robolectric.pluginapi.TestEnvironmentLifecyclePlugin
 
 /**
- * Robolectric reuses one class loader across tests, so the app's per-process
- * singletons would outlive the Application they were built for. This forgets
- * them before each test's Application is created.
+ * Robolectric reuses one class loader across a class's tests, so per-process
+ * singletons would outlive the Application they were built for (a second
+ * MainActivity would get a view model bound to the first test's connection).
+ * This forgets them before each test's Application is created.
  */
 class ResetAppSingletons : TestEnvironmentLifecyclePlugin {
     override fun onSetupApplicationState() {
         val loader = Thread.currentThread().contextClassLoader ?: javaClass.classLoader
         SINGLETONS.forEach { (name, field) ->
-            val type = runCatching { Class.forName("app.hermesconduit.android.$name", false, loader) }.getOrNull() ?: return@forEach
+            val type = runCatching { Class.forName(name, false, loader) }.getOrNull() ?: return@forEach
             runCatching {
                 val f = type.getDeclaredField(field).apply { isAccessible = true }
                 if (f.type == Boolean::class.javaPrimitiveType) f.setBoolean(null, false) else f.set(null, null)
             }
         }
-        runCatching {
-            Class.forName("app.hermesconduit.android.ConduitApplicationKt", false, loader)
-                .getDeclaredField("fallbackSettings").apply { isAccessible = true }.set(null, null)
-        }
     }
 
     private companion object {
+        const val APP = "app.hermesconduit.android"
         val SINGLETONS = listOf(
-            "watch.WatchPhoneCallLog" to "shared",
-            "watch.WatchBridge" to "shared",
-            "watch.WatchDirectBroker" to "shared",
-            "ui.gateway.GatewayRestartController" to "instance",
-            "ui.voice.VoiceHub" to "instance",
-            "ui.location.LocationSharing" to "instance",
-            "ui.plugin.PluginStatusRepository" to "instance",
-            "ui.health.HealthSync" to "instance",
-            "ui.kanban.KanbanRuntime" to "instance",
-            "ui.device.VoiceHostTools" to "instance",
-            "ui.phone.PhoneSync" to "instance",
-            "calls.HermesCalls" to "instance",
-            "wake.WakePhrase" to "instance",
-            "core.ProfileAppearance" to "instance",
-            "ui.device.DeviceSharing" to "started",
+            "$APP.ConduitApplicationKt" to "fallbackSettings",
+            "$APP.watch.WatchPhoneCallLog" to "shared",
+            "$APP.watch.WatchBridge" to "shared",
+            "$APP.watch.WatchDirectBroker" to "shared",
+            "$APP.ui.gateway.GatewayRestartController" to "instance",
+            "$APP.ui.voice.VoiceHub" to "instance",
+            "$APP.ui.location.LocationSharing" to "instance",
+            "$APP.ui.plugin.PluginStatusRepository" to "instance",
+            "$APP.ui.health.HealthSync" to "instance",
+            "$APP.ui.kanban.KanbanRuntime" to "instance",
+            "$APP.ui.device.VoiceHostTools" to "instance",
+            "$APP.ui.phone.PhoneSync" to "instance",
+            "$APP.calls.HermesCalls" to "instance",
+            "$APP.wake.WakePhrase" to "instance",
+            "$APP.core.ProfileAppearance" to "instance",
+            "$APP.ui.device.DeviceSharing" to "started",
+            // The default view model factory keeps the first Application it saw.
+            "androidx.lifecycle.ViewModelProvider\$AndroidViewModelFactory" to "_instance",
         )
     }
 }
