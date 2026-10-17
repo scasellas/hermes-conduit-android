@@ -1,5 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Android Auto reads Conduit's messaging notifications aloud and takes voice replies. -->
+<!--
+  Android Auto: Conduit's templated messaging app (the voice screen and the
+  chat list, ConduitCarAppService), and its messaging notifications, which the
+  car reads aloud and answers by voice.
+-->
 <automotiveApp>
+    <uses name="template" />
     <uses name="notification" />
 </automotiveApp>
