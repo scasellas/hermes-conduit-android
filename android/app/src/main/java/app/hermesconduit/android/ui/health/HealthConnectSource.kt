@@ -100,7 +100,8 @@ class HealthConnectSource(private val context: Context) : HealthDataSource {
     /** Every record a metric reads. */
     private fun readTypes(metric: HealthMetric): List<KClass<out Record>> = when (metric) {
         HealthMetric.DISTANCE_CYCLING -> listOf(ExerciseSessionRecord::class, DistanceRecord::class)
-        HealthMetric.WALKING_HEART_RATE_AVERAGE -> listOf(ExerciseSessionRecord::class, HeartRateRecord::class)
+        // Walking comes from the steps' cadence as well as from walking sessions.
+        HealthMetric.WALKING_HEART_RATE_AVERAGE -> listOf(ExerciseSessionRecord::class, HeartRateRecord::class, StepsRecord::class)
         else -> listOfNotNull(recordType(metric))
     }
 
@@ -137,15 +138,27 @@ class HealthConnectSource(private val context: Context) : HealthDataSource {
         return types.isNotEmpty() && types.all { HealthPermission.getReadPermission(it) in granted }
     }
 
+    /** Walking heart rate needs the heart rate, and the steps or the sessions to say when the user walked. */
+    private suspend fun walkingReadable(): Pair<Boolean, Boolean>? {
+        val granted = granted()
+        if (HealthPermission.getReadPermission(HeartRateRecord::class) !in granted) return null
+        val steps = HealthPermission.getReadPermission(StepsRecord::class) in granted
+        val sessions = HealthPermission.getReadPermission(ExerciseSessionRecord::class) in granted
+        return if (steps || sessions) steps to sessions else null
+    }
+
     // endregion
 
     // region HealthDataSource
 
     override suspend fun buckets(metric: HealthMetric, grain: HealthGrain, from: Instant, to: Instant, zone: ZoneId): List<HealthBucket> {
+        if (metric == HealthMetric.WALKING_HEART_RATE_AVERAGE) {
+            val (steps, sessions) = walkingReadable() ?: return emptyList()
+            return HealthStats.buckets(walkingHeartRates(from, to, steps, sessions), grain, from, to, zone)
+        }
         if (!readable(metric)) return emptyList()
         return when {
             metric == HealthMetric.DISTANCE_CYCLING -> cyclingDistance(grain, from, to, zone)
-            metric == HealthMetric.WALKING_HEART_RATE_AVERAGE -> HealthStats.buckets(walkingHeartRates(from, to), grain, from, to, zone)
             metric.aggregation == app.hermesconduit.android.model.HealthAggregation.SUM -> sums(metric, grain, from, to, zone)
             else -> HealthStats.buckets(readings(metric, from, to), grain, from, to, zone)
         }
@@ -170,17 +183,23 @@ class HealthConnectSource(private val context: Context) : HealthDataSource {
         client.aggregate(AggregateRequest(setOf(DistanceRecord.DISTANCE_TOTAL), TimeRangeFilter.between(from, to)))[DistanceRecord.DISTANCE_TOTAL]?.inMeters
 
     /**
-     * An approximation of iOS's walking heart rate average, which Apple
-     * computes from heart rate while the user walks during the day: here
-     * the mean heart rate during each walking session (overlapping sessions
-     * as one), as a reading at the session's start. Walks nobody recorded
-     * as a session don't count, and hikes are left out (climbing raises
-     * the heart rate).
+     * iOS's walking heart rate average, which Apple computes from the heart
+     * rate while the user walks, all day and not only in workouts: here the
+     * heart rate samples inside the minutes the steps show a walking cadence
+     * (see [HealthDerived.walkingPeriods]) joined with the walking sessions,
+     * so each daily bucket's mean is the mean heart rate while walking.
+     * Hikes are left out (climbing raises the heart rate), and so is running
+     * by its cadence.
      */
-    private suspend fun walkingHeartRates(from: Instant, to: Instant): List<HealthStats.Reading> =
-        HealthDerived.merged(sessions(WALKING_TYPES, from, to).map { it.startTime to it.endTime }).mapNotNull { (start, end) ->
-            meanHeartRate(start, end)?.let { HealthStats.Reading(start, it) }
-        }
+    private suspend fun walkingHeartRates(from: Instant, to: Instant, steps: Boolean, sessions: Boolean): List<HealthStats.Reading> {
+        val walks = if (sessions) sessions(WALKING_TYPES, from, to).map { it.startTime to it.endTime } else emptyList()
+        val counts = if (steps) {
+            readAll(StepsRecord::class, from, to).map { HealthDerived.StepCount(it.startTime, it.endTime, it.count, it.metadata.dataOrigin.packageName) }
+        } else emptyList()
+        if (walks.isEmpty() && counts.isEmpty()) return emptyList()
+        val heartRates = readAll(HeartRateRecord::class, from, to).flatMap { readingsOf(HealthMetric.HEART_RATE, it) }
+        return HealthDerived.walkingHeartRates(counts, walks, heartRates)
+    }
 
     private suspend fun meanHeartRate(from: Instant, to: Instant): Double? =
         HealthDerived.mean(readAll(HeartRateRecord::class, from, to).flatMap { readingsOf(HealthMetric.HEART_RATE, it) }, from, to)
@@ -300,7 +319,12 @@ class HealthConnectSource(private val context: Context) : HealthDataSource {
             HealthEventStream.Sleep -> SleepSessionRecord::class
             is HealthEventStream.Samples -> recordType(stream.metric) ?: return HealthEventChanges(emptyList(), emptyList(), anchor, false)
         }
-        val readable = if (stream is HealthEventStream.Samples) readable(stream.metric) else HealthPermission.getReadPermission(type) in granted()
+        val readable = when {
+            // A walk's own reading comes with its session (see [sessionSample]): the steps aren't needed.
+            stream is HealthEventStream.Samples && stream.metric == HealthMetric.WALKING_HEART_RATE_AVERAGE -> walkingReadable()?.second == true
+            stream is HealthEventStream.Samples -> readable(stream.metric)
+            else -> HealthPermission.getReadPermission(type) in granted()
+        }
         if (!readable) return HealthEventChanges(emptyList(), emptyList(), anchor, false)
         val parts = anchor?.split('\n')
         if (parts == null || parts[0] == "r") {

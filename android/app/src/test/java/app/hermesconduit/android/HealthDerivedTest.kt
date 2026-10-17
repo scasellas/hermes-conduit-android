@@ -93,6 +93,77 @@ class HealthDerivedTest {
         assertEquals(110.0, daily[0].max!!, 0.0)
     }
 
+    private fun steps(start: String, minutes: Long, count: Long, origin: String = "phone") =
+        HealthDerived.StepCount(date(start), date(start).plusSeconds(minutes * 60), count, origin)
+
+    @Test
+    fun walkingPeriodsAreSustainedWalkingCadence() {
+        val periods = HealthDerived.walkingPeriods(
+            listOf(
+                // Ten minutes at 100 a minute, in two records: one walk.
+                steps("2026-10-13T08:00:00Z", 5, 500),
+                steps("2026-10-13T08:05:00Z", 5, 500),
+                // Two minutes at a walking cadence: too short.
+                steps("2026-10-13T09:00:00Z", 2, 200),
+                // Pottering about: 30 a minute.
+                steps("2026-10-13T10:00:00Z", 10, 300),
+                // Running: 160 a minute.
+                steps("2026-10-13T11:00:00Z", 10, 1_600),
+                // Exactly the edges of the band count.
+                steps("2026-10-13T12:00:00Z", 3, 180),
+                steps("2026-10-13T13:00:00Z", 3, 390),
+            ),
+        )
+        assertEquals(
+            listOf(
+                date("2026-10-13T08:00:00Z") to date("2026-10-13T08:10:00Z"),
+                date("2026-10-13T12:00:00Z") to date("2026-10-13T12:03:00Z"),
+                date("2026-10-13T13:00:00Z") to date("2026-10-13T13:03:00Z"),
+            ),
+            periods,
+        )
+    }
+
+    @Test
+    fun walkingPeriodsSpreadARecordAndDontAddUpApps() {
+        // An hour-long record counts at its mean cadence: 4,800 steps is 80 a minute.
+        assertEquals(listOf(date("2026-10-13T08:00:00Z") to date("2026-10-13T09:00:00Z")),
+            HealthDerived.walkingPeriods(listOf(steps("2026-10-13T08:00:00Z", 60, 4_800))))
+        // A phone and a watch counting the same 90-a-minute walk aren't a 180-a-minute run.
+        val both = listOf(steps("2026-10-13T08:00:00Z", 5, 450, "phone"), steps("2026-10-13T08:00:00Z", 5, 470, "watch"))
+        assertEquals(listOf(date("2026-10-13T08:00:00Z") to date("2026-10-13T08:05:00Z")), HealthDerived.walkingPeriods(both))
+        // A record off the minute is spread across the minutes it touches.
+        val offset = HealthDerived.walkingPeriods(listOf(HealthDerived.StepCount(date("2026-10-13T08:00:30Z"), date("2026-10-13T08:04:30Z"), 400, "phone")))
+        assertEquals(listOf(date("2026-10-13T08:01:00Z") to date("2026-10-13T08:04:00Z")), offset)
+        assertTrue(HealthDerived.walkingPeriods(listOf(HealthDerived.StepCount(date("2026-10-13T08:00:00Z"), date("2026-10-13T08:00:00Z"), 100, "phone"))).isEmpty())
+    }
+
+    @Test
+    fun walkingHeartRateCountsStepsWalksAndSessionsOnce() {
+        val heart = listOf(
+            HealthStats.Reading(date("2026-10-13T07:30:00Z"), 60.0), // sitting
+            HealthStats.Reading(date("2026-10-13T08:02:00Z"), 95.0), // steps walk
+            HealthStats.Reading(date("2026-10-13T08:08:00Z"), 105.0), // steps walk and session
+            HealthStats.Reading(date("2026-10-13T08:20:00Z"), 110.0), // session only (a treadmill, no steps)
+            HealthStats.Reading(date("2026-10-13T11:05:00Z"), 160.0), // running
+            HealthStats.Reading(date("2026-10-13T17:01:00Z"), 100.0), // evening walk
+        )
+        val readings = HealthDerived.walkingHeartRates(
+            steps = listOf(steps("2026-10-13T08:00:00Z", 10, 1_000), steps("2026-10-13T11:00:00Z", 10, 1_600), steps("2026-10-13T17:00:00Z", 5, 450)),
+            sessions = listOf(date("2026-10-13T08:05:00Z") to date("2026-10-13T08:30:00Z")),
+            heartRates = heart,
+        )
+        assertEquals(listOf(95.0, 105.0, 110.0, 100.0), readings.map { it.value })
+        val daily = HealthStats.buckets(readings, HealthGrain.DAY, date("2026-10-12T22:00:00Z"), date("2026-10-13T22:00:00Z"), zone)
+        assertEquals(1, daily.size)
+        assertEquals(102.5, daily[0].avg!!, 1e-9)
+        assertEquals(95.0, daily[0].min!!, 0.0)
+        assertEquals(110.0, daily[0].max!!, 0.0)
+        assertTrue("No walking: nothing", HealthDerived.walkingHeartRates(emptyList(), emptyList(), heart).isEmpty())
+        assertEquals("Sessions alone still count", listOf(105.0, 110.0),
+            HealthDerived.walkingHeartRates(emptyList(), listOf(date("2026-10-13T08:05:00Z") to date("2026-10-13T08:30:00Z")), heart).map { it.value })
+    }
+
     @Test
     fun wristTemperatureIsTheBaselinePlusTheMeanDeviation() {
         assertEquals(34.75, HealthDerived.skinTemperature(34.5, listOf(0.1, 0.4))!!, 1e-9)

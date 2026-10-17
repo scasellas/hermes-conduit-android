@@ -476,7 +476,8 @@ object HealthStats {
 /**
  * Metrics Health Connect has no record for, made from the records it has:
  * cycling distance is the distance inside biking sessions, walking heart
- * rate the heart rate inside walking sessions, wrist temperature a skin
+ * rate the heart rate while the steps or a session say the user walked,
+ * wrist temperature a skin
  * temperature record's baseline plus its deltas. Each still goes as the iOS
  * metric, in its unit and buckets.
  */
@@ -521,6 +522,103 @@ object HealthDerived {
     /** The mean of the readings in [start, end], or null without any. */
     fun mean(readings: List<HealthStats.Reading>, start: Instant, end: Instant): Double? =
         readings.filter { it.at >= start && it.at <= end }.map { it.value }.takeIf { it.isNotEmpty() }?.average()
+
+    /** A steps record as the walking finder takes it: its count over [start, end), and the app that wrote it. */
+    data class StepCount(val start: Instant, val end: Instant, val count: Long, val origin: String)
+
+    /**
+     * Walking cadence, in steps a minute. Apple's walking heart rate average
+     * is the heart rate while the user walks, from all walking and not only
+     * workouts, so Conduit finds walking from the steps as well. Tudor-Locke's
+     * cadence bands (Tudor-Locke et al., 2018, 2019) put slow walking at 60–79
+     * steps a minute and brisk walking at 100–119; adults change to a jog at
+     * about 130–140. Below 60 is pottering about the house (incidental and
+     * sporadic steps), above 130 most likely running, and running would raise
+     * the average the way a hike would.
+     */
+    const val WALKING_CADENCE_MIN = 60.0
+    const val WALKING_CADENCE_MAX = 130.0
+
+    /**
+     * Minutes of walking cadence in a row that count as a walk. Three is long
+     * enough to leave out a dash for the bus or a trip to the kitchen (the
+     * heart rate lags the first minute or two of a walk anyway), short enough
+     * to keep a walk between rooms at work.
+     */
+    const val WALKING_MINUTES_MIN = 3
+
+    private const val MINUTE_MS = 60_000L
+
+    /**
+     * The periods the steps say the user walked: whole minutes at a walking
+     * cadence, [WALKING_MINUTES_MIN] or more in a row. A record's steps are
+     * spread evenly over its time, so a record an hour long counts at its
+     * mean cadence. Apps that record the same steps (a phone and a watch)
+     * aren't added together: each minute takes the app that counted most.
+     */
+    fun walkingPeriods(steps: List<StepCount>): List<Pair<Instant, Instant>> {
+        val perOrigin = mutableMapOf<String, MutableMap<Long, Double>>()
+        for (record in steps) {
+            val start = record.start.toEpochMilli()
+            val end = record.end.toEpochMilli()
+            if (end <= start || record.count <= 0) continue
+            val minutes = perOrigin.getOrPut(record.origin) { mutableMapOf() }
+            var minute = Math.floorDiv(start, MINUTE_MS)
+            while (minute * MINUTE_MS < end) {
+                val overlap = minOf(end, (minute + 1) * MINUTE_MS) - maxOf(start, minute * MINUTE_MS)
+                if (overlap > 0) minutes[minute] = (minutes[minute] ?: 0.0) + record.count.toDouble() * overlap / (end - start)
+                minute++
+            }
+        }
+        val cadence = mutableMapOf<Long, Double>()
+        for (minutes in perOrigin.values) for ((minute, count) in minutes) cadence[minute] = maxOf(cadence[minute] ?: 0.0, count)
+        val walking = cadence.filter { it.value in WALKING_CADENCE_MIN..WALKING_CADENCE_MAX }.keys.sorted()
+        val periods = mutableListOf<Pair<Instant, Instant>>()
+        var runStart: Long? = null
+        var previous: Long? = null
+        fun close() {
+            val first = runStart ?: return
+            val last = previous ?: return
+            if (last - first + 1 >= WALKING_MINUTES_MIN) periods += Instant.ofEpochMilli(first * MINUTE_MS) to Instant.ofEpochMilli((last + 1) * MINUTE_MS)
+        }
+        for (minute in walking) {
+            if (previous == null || minute != previous + 1) {
+                close()
+                runStart = minute
+            }
+            previous = minute
+        }
+        close()
+        return periods
+    }
+
+    /**
+     * Heart rate while walking: the samples inside the walking periods the
+     * steps show joined with the walking sessions, each sample once. The daily
+     * bucket's mean is then the mean heart rate while walking, as Apple's.
+     */
+    fun walkingHeartRates(
+        steps: List<StepCount>,
+        sessions: List<Pair<Instant, Instant>>,
+        heartRates: List<HealthStats.Reading>,
+    ): List<HealthStats.Reading> {
+        val periods = merged(walkingPeriods(steps) + sessions)
+        if (periods.isEmpty()) return emptyList()
+        return heartRates.sortedBy { it.at }.filter { reading ->
+            // The last period starting at or before the reading.
+            var low = 0
+            var high = periods.lastIndex
+            var found = -1
+            while (low <= high) {
+                val mid = (low + high) / 2
+                if (periods[mid].first <= reading.at) {
+                    found = mid
+                    low = mid + 1
+                } else high = mid - 1
+            }
+            found >= 0 && reading.at <= periods[found].second
+        }
+    }
 
     /**
      * iOS sends Apple's sleeping wrist temperature, an absolute temperature
