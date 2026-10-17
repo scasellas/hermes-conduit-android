@@ -23,7 +23,7 @@ Verification so far is JVM unit tests (MockWebServer, fake sockets, protocol vec
 | 13 | Cron | Ported. | — |
 | 14 | Saved dashboards | Ported. | — |
 | 15 | Health | Ported on Health Connect. | Some HealthKit metrics have no Health Connect record type. |
-| 16 | Calendar & phone | Ported (CalendarContract, AlarmClock, DND for Focus). | No system reminders. Alarms can't be read back. "Phone changes" arrive on reconnect rather than by push. |
+| 16 | Calendar & phone | Ported (CalendarContract, AlarmClock, DND for Focus). Reminders come from tasks apps with the OpenTasks provider (OpenTasks, Tasks.org). | Android has no system reminders: without such an app, reminders stay off. jtx Board's provider is for sync adapters only. Alarms can't be read back. "Phone changes" arrive on reconnect rather than by push. |
 | 17 | Location and Maps | Ported (fused location, geofences, Geocoder). | iOS answers Hermes' on-demand locate through an APNs location push. Android instead sends a fresh fix the moment Hermes starts its location or maps tool in a chat on the socket. Maps “Go” confirmations open Maps by themselves from the chat on screen, as on iOS. No on-device routing. |
 | 18 | Bot Mode | Ported. | — |
 | 19 | Group chats | Ported. | — |
@@ -31,7 +31,7 @@ Verification so far is JVM unit tests (MockWebServer, fake sockets, protocol vec
 | 21 | Artifacts | Ported. | — |
 | 22 | Presented screens | Ported. | — |
 | 23 | Ask Hermes About Screen | Ported via the assistant (VoiceInteractionService), the share sheet and PROCESS_TEXT. | — |
-| 24 | Shortcuts / App Intents | Send to Hermes: an automation intent and broadcast, opt-in. Start voice: `conduit://voice` and a launcher shortcut. Quick Settings tile. | No Focus filter API. |
+| 24 | Shortcuts / App Intents | Send to Hermes: an automation intent and broadcast, opt-in. Start voice: `conduit://voice` and a launcher shortcut. Quick Settings tile. Focus filter: "Do Not Disturb & Modes" filters in Settings > Calendar & phone ("Name for Hermes", "Hold calls from Hermes"), and on Android 15 Conduit's own mode in the system's Modes. | Android has no Focus filter API, and apps can't read which system mode is on: a filter is for any Do Not Disturb or for Conduit's mode. |
 | 25 | Widgets | Ported (Glance, native and character). | — |
 | 26 | Apple Watch → Wear OS | Ported: bridge call, direct Gemini Live with the phone broker, Grok/GPT-Live bridge, engine picker, tile, complication, call log, approvals, Watch settings. | Calls from Hermes ring the watch too (the phone settles the ring over the Data Layer instead of the relay). watchOS-only audio workarounds and the CallKit relay handoff don't apply. |
 | 27 | CarPlay → Android Auto | MessagingStyle notifications with voice reply and mark-as-read. | Android Auto allows third-party chat apps only through notifications, so there are no browse or voice templates. |

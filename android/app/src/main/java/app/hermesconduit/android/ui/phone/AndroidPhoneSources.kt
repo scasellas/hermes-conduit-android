@@ -1,7 +1,6 @@
 package app.hermesconduit.android.ui.phone
 
 import android.Manifest
-import android.app.NotificationManager
 import android.app.UiModeManager
 import android.content.ContentUris
 import android.content.ContentValues
@@ -54,9 +53,10 @@ private fun Cursor.int(column: String): Int? = getColumnIndex(column).takeIf { i
  * applies the changes Hermes asked for (iOS EventKitPhoneSource). Ids are
  * hashed: an event's from its id and the start of that occurrence, a
  * calendar's from its id, so the host never sees the provider's own ids.
- * Android has no system reminders, so reminders are never shared here.
+ * Android has no system reminders: they come from a tasks app with the
+ * OpenTasks provider ([TaskProviderReminders]), when one is installed.
  */
-class CalendarContractSource(private val context: Context) : PhoneCalendarSource {
+class CalendarContractSource(private val context: Context, val tasks: TaskProviderReminders = TaskProviderReminders(context)) : PhoneCalendarSource {
     private fun granted(permission: String) = ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
 
     override val eventAccess: PhoneCalendarAccess
@@ -66,7 +66,7 @@ class CalendarContractSource(private val context: Context) : PhoneCalendarSource
             else -> PhoneCalendarAccess.OFF
         }
 
-    override val remindersAuthorized: Boolean get() = false
+    override val remindersAuthorized: Boolean get() = tasks.authorized
 
     private data class CalendarRow(val id: Long, val title: String, val color: Int, val account: String, val owner: String?, val writable: Boolean, val primary: Boolean)
 
@@ -104,7 +104,11 @@ class CalendarContractSource(private val context: Context) : PhoneCalendarSource
         rows.firstOrNull { it.primary && it.writable } ?: rows.firstOrNull { it.writable }
 
     override fun calendars(eventsReadable: Boolean, reminders: Boolean): List<JsonObject> {
-        if (!eventsReadable) return emptyList()
+        val events = if (eventsReadable) eventCalendars() else emptyList()
+        return if (reminders) events + tasks.listJSON(100 - events.size) else events
+    }
+
+    private fun eventCalendars(): List<JsonObject> {
         val rows = calendarRows()
         val defaultID = defaultCalendar(rows)?.id
         return rows.take(100).map { row ->
@@ -121,10 +125,11 @@ class CalendarContractSource(private val context: Context) : PhoneCalendarSource
         }
     }
 
-    override fun platformCalendarID(forShared: String): String? = calendarRows().firstOrNull { calendarID(it.id) == forShared }?.id?.toString()
+    override fun platformCalendarID(forShared: String): String? =
+        calendarRows().firstOrNull { calendarID(it.id) == forShared }?.id?.toString() ?: tasks.platformListID(forShared)
 
     override fun calendarTitle(id: String?, forEvents: Boolean): String? {
-        if (!forEvents) return null
+        if (!forEvents) return if (tasks.authorized) tasks.listTitle(id) else null
         val rows = calendarRows()
         return (id?.let { shared -> rows.firstOrNull { calendarID(it.id) == shared } } ?: defaultCalendar(rows))?.title
     }
@@ -295,7 +300,8 @@ class CalendarContractSource(private val context: Context) : PhoneCalendarSource
         else -> "none"
     }
 
-    override suspend fun reminders(hidden: Set<String>, details: Boolean, completedSince: Instant, limit: Int): List<JsonObject> = emptyList()
+    override suspend fun reminders(hidden: Set<String>, details: Boolean, completedSince: Instant, limit: Int): List<JsonObject> =
+        withContext(Dispatchers.IO) { tasks.reminders(hidden, details, completedSince, limit) }
 
     // region Writing
 
@@ -365,8 +371,7 @@ class CalendarContractSource(private val context: Context) : PhoneCalendarSource
                 }
                 id
             }
-            PhoneChangeKind.ADD_REMINDER, PhoneChangeKind.UPDATE_REMINDER, PhoneChangeKind.COMPLETE_REMINDER ->
-                throw PhoneSourceException(L10n.tr("Android has no reminders app for Conduit to use, so reminders can't be set here."))
+            PhoneChangeKind.ADD_REMINDER, PhoneChangeKind.UPDATE_REMINDER, PhoneChangeKind.COMPLETE_REMINDER -> tasks.apply(change)
             else -> throw PhoneSourceException(L10n.tr("That item isn't on this phone any more."))
         }
     }
@@ -405,7 +410,7 @@ class CalendarContractSource(private val context: Context) : PhoneCalendarSource
         Instant.ofEpochMilli(epochMs).atZone(ZoneId.systemDefault()).toLocalDate().atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli()
 
     override suspend fun removeAdded(itemID: String, isEvent: Boolean, window: Pair<Instant, Instant>) = withContext(Dispatchers.IO) {
-        if (!isEvent) return@withContext
+        if (!isEvent) return@withContext tasks.remove(itemID)
         val event = findEvent(itemID, window)
         context.contentResolver.delete(ContentUris.withAppendedId(CalendarContract.Events.CONTENT_URI, event.eventID), null, null)
         Unit
@@ -469,12 +474,8 @@ class AndroidPhoneStatusSource(private val context: Context) : PhoneStatusSource
         }
     }.getOrDefault("none")
 
-    /** Do Not Disturb stands in for iOS Focus. */
-    override fun focus(): PhoneFocusSnapshot? = runCatching {
-        val filter = context.getSystemService(NotificationManager::class.java).currentInterruptionFilter
-        val active = filter != NotificationManager.INTERRUPTION_FILTER_ALL && filter != NotificationManager.INTERRUPTION_FILTER_UNKNOWN
-        PhoneFocusSnapshot(active, if (active) "Do Not Disturb" else null, false, Instant.now())
-    }.getOrNull()
+    /** Do Not Disturb stands in for iOS Focus, through the user's "Tell Hermes" filters ([PhoneModes]). */
+    override fun focus(): PhoneFocusSnapshot? = runCatching { PhoneModes.snapshot(context) }.getOrNull()
 }
 
 /**

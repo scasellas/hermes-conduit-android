@@ -54,7 +54,7 @@ import kotlin.coroutines.coroutineContext
 /** The calendar reading and writing a pass needs; a fake stands in for tests. */
 interface PhoneCalendarSource {
     val eventAccess: PhoneCalendarAccess
-    /** Android has no system reminders: false there. */
+    /** Android has no system reminders: true once a tasks app with the OpenTasks provider lets Conduit in. */
     val remindersAuthorized: Boolean
     /** Calendars, each `{id, title, kind, color, source, writable, shared, default}`. */
     fun calendars(eventsReadable: Boolean, reminders: Boolean): List<JsonObject>
@@ -355,9 +355,9 @@ class PhoneSyncEngine(
         }
 
         if (readsReminders) {
-            val since = at.minusSeconds(14L * 86_400)
-            val reminders = calendarSource.reminders(preferences.hiddenCalendars, preferences.details, since, 1_000)
-            val section = PhoneSyncRules.diff(reminders, current.reminderHashes, full, reminders.size >= 1_000)
+            val since = at.atZone(zone()).minusDays(PhoneSyncLimits.COMPLETED_REMINDER_DAYS).toInstant()
+            val reminders = calendarSource.reminders(preferences.hiddenCalendars, preferences.details, since, PhoneSyncLimits.MAX_REMINDERS)
+            val section = PhoneSyncRules.diff(reminders, current.reminderHashes, full, reminders.size >= PhoneSyncLimits.MAX_REMINDERS)
             if (full || section.upsert.isNotEmpty() || section.delete.isNotEmpty()) {
                 batch["reminders"] = buildJsonObject {
                     put("full", full)
