@@ -4,6 +4,7 @@ import android.content.Context
 import app.hermesconduit.android.core.audio.AudioRecordCapture
 import app.hermesconduit.android.core.audio.AudioTrackPlayback
 import app.hermesconduit.android.core.audio.CaptureEvent
+import app.hermesconduit.android.core.audio.ExternalMicrophone
 import app.hermesconduit.android.core.audio.PlaybackIntent
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -26,6 +27,13 @@ class LiveVoiceAudio(
     private val capture = AudioRecordCapture(context, scope)
     private val playback = AudioTrackPlayback(context).apply { intent = PlaybackIntent.CONVERSATION }
     private var eventsJob: Job? = null
+
+    /** The car's microphone while Android Auto is connected; null records from the phone's. */
+    var externalMicrophone: ExternalMicrophone?
+        get() = capture.externalMicrophone
+        set(value) {
+            capture.externalMicrophone = value
+        }
 
     val input: LiveAudioInput = object : LiveAudioInput {
         override var onChunk: ((ByteArray) -> Unit)? = null

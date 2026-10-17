@@ -59,9 +59,16 @@ class AudioRecordCapture(
 
     /**
      * Records from this microphone instead of the phone's while set (the car's,
-     * while Android Auto runs the conversation). Takes effect on the next start.
+     * while Android Auto is connected). A capture that is running moves to the
+     * new microphone at once, keeping its listening window, so a conversation
+     * the phone started carries on when the car connects or goes away.
      */
     @Volatile var externalMicrophone: ExternalMicrophone? = null
+        set(value) {
+            if (field === value) return
+            field = value
+            switchMicrophoneIfRunning()
+        }
     private var openExternal: ExternalMicrophone? = null
 
     /** Raw frames as they arrive (for engines that stream them, e.g. live voice). */
@@ -183,6 +190,25 @@ class AudioRecordCapture(
         captureGeneration++
         val generation = captureGeneration
         reader = Thread({ readLoop(generation) { buffer -> microphone.read(buffer, 0, buffer.size) } }, "conduit-capture").apply { start() }
+    }
+
+    /** Reopens a running capture on the microphone now chosen; a paused one picks it up when it resumes. */
+    private fun switchMicrophoneIfRunning() {
+        if (!running || openExternal === externalMicrophone) return
+        val recording = activelyRecording
+        val held = heldForPlayback
+        teardown()
+        try {
+            startIfNeeded()
+        } catch (_: Exception) {
+            // The listening window ends as if the system took the microphone.
+            captureGeneration++
+            val generation = captureGeneration
+            scope.launch { _events.emit(CaptureEvent.Interrupted(generation)) }
+            return
+        }
+        activelyRecording = recording
+        heldForPlayback = held
     }
 
     private fun readLoop(generation: Long, readInto: (ByteArray) -> Int) {

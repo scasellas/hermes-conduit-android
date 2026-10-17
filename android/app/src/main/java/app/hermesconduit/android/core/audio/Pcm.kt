@@ -105,6 +105,17 @@ object Pcm {
         }
 
         fun clear() { start = 0; count = 0 }
+
+        val size: Int get() = count
+
+        /** Moves the oldest bytes, at most [length], into [into]; the number moved. */
+        fun take(into: ByteArray, length: Int = into.size): Int {
+            val moved = minOf(length, count, into.size)
+            for (i in 0 until moved) into[i] = buffer[(start + i) % capacity]
+            start = (start + moved) % capacity
+            count -= moved
+            return moved
+        }
     }
 
     /** An append-only PCM buffer readable while it grows. */

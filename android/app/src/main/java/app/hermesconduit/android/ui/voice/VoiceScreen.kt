@@ -148,9 +148,27 @@ fun VoiceConversationScreen(onBack: () -> Unit, navigate: (String) -> Unit) {
     var openError by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     val view = LocalView.current
+    // Leaving can be asked twice (Close, then the conversation closing): the screen goes once.
+    var left by remember { mutableStateOf(false) }
+    fun goBack() {
+        if (left) return
+        left = true
+        onBack()
+    }
     val close = {
         hub.closeConversation()
-        onBack()
+        goBack()
+    }
+
+    // The car and this screen present one conversation. When the car closes
+    // it, or starts another in a different chat, this screen goes too, as the
+    // iOS sheet does: it never takes the car's conversation over.
+    var presentedHost by remember { mutableStateOf<VoiceConversationHost?>(null) }
+    val openHost by hub.conversationHost.collectAsStateWithLifecycle()
+    LaunchedEffect(openHost) {
+        val shown = presentedHost
+        if (shown == null) presentedHost = openHost
+        else if (openHost !== shown) goBack()
     }
 
     LaunchedEffect(profiles) { hub.knownProfiles = profiles }
@@ -164,7 +182,7 @@ fun VoiceConversationScreen(onBack: () -> Unit, navigate: (String) -> Unit) {
             if (controller.currentState == VoiceConversationState.IDLE && !controller.isRuntimeSuspended) controller.startListening()
             return
         }
-        openError = hub.openConversation(ChatVoiceHost(hub, viewModel, onBack))
+        openError = hub.openConversation(ChatVoiceHost(hub, viewModel) { goBack() })
         if (openError == null) controller.startListening()
     }
 
@@ -206,6 +224,7 @@ fun VoiceConversationScreen(onBack: () -> Unit, navigate: (String) -> Unit) {
             // The app closing ends the voice session (a rotation keeps it); Back and End close it explicitly.
             val activity = context.activity()
             if (activity?.isFinishing == true && !activity.isChangingConfigurations) hub.closeConversation()
+            else hub.onConversationScreenGone()
         }
     }
 
