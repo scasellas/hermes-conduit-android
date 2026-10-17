@@ -170,6 +170,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application), Ch
 
     val dashboardUrl: String? get() = hermes.connection.value?.baseUrl
 
+    // Before init: a signed-in launch restores the last chat from settings while constructing.
+    private val settings = application.appSettings
+
     init {
         viewModelScope.launch { hermes.events.collect(::onEvent) }
         viewModelScope.launch {
@@ -577,7 +580,6 @@ class AppViewModel(application: Application) : AndroidViewModel(application), Ch
         _chat.value = ChatState(model = _chat.value.model, provider = _chat.value.provider)
     }
 
-    private val settings = application.appSettings
 
     private val _openRoute = MutableStateFlow<String?>(null)
     /** A route a link asked to open (consumed by the navigation host). */
