@@ -8,7 +8,9 @@ import app.hermesconduit.android.core.LinkState
 import app.hermesconduit.android.data.SavedConnection
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.runBlocking
+import androidx.startup.InitializationProvider
 import org.junit.Assert.fail
+import org.robolectric.Robolectric
 import org.robolectric.Shadows.shadowOf
 import java.time.Duration
 
@@ -39,6 +41,15 @@ object Integration {
             looper.idleFor(Duration.ofMillis(10))
             Thread.sleep(5)
         }
+    }
+
+    /**
+     * Robolectric creates no manifest ContentProviders, so androidx.startup's
+     * initializers (ProcessLifecycleOwner, WorkManager) wait for this, as the
+     * system runs them at process start.
+     */
+    fun runStartupInitializers() {
+        Robolectric.setupContentProvider(InitializationProvider::class.java, "${app.packageName}.androidx-startup")
     }
 
     /** Signs in with a password through the real connection, as the login screen does. */

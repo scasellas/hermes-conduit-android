@@ -135,7 +135,12 @@ class FakeHermes : Closeable {
             when (method) {
                 "client.capabilities" -> reply("""{"declines_not_shown":true}""")
                 "session.create" -> reply("""{"session_id":"rt-new","stored_session_id":"st-new"}""")
-                "session.resume" -> reply("""{"session_id":"rt-${params["session_id"].str}","running":false,"info":{"model":"test-model"}}""")
+                "session.resume" -> {
+                    // Stored ids resume as "rt-<id>"; a runtime id resumes as itself.
+                    val stored = params["session_id"].str.orEmpty()
+                    val runtime = if (stored.startsWith("rt-")) stored else "rt-$stored"
+                    reply("""{"session_id":"$runtime","running":false,"info":{"model":"test-model"}}""")
+                }
                 "session.active_list" -> reply("""{"sessions":[]}""")
                 "approval.pending" -> reply("""{"approvals":[]}""")
                 "approval.respond" -> reply("""{"ok":true}""")
