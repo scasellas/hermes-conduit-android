@@ -55,6 +55,19 @@ object VoiceCommands {
 
     fun asksToEndCall(utterance: String): Boolean = matchesSpokenCommand(utterance, endPhrases + hangUpPhrases)
 
+    /** With the profile's own end phrases, as a live call gets them from the phone; none turns ending by voice off. */
+    fun asksToEndCall(utterance: String, endPhrases: List<String>): Boolean =
+        endPhrases.isNotEmpty() && matchesSpokenCommand(utterance, endPhrases + hangUpPhrases)
+
+    private val endCallMarker = Regex("^\\s*end[ -]?(?:(?:the|this)\\s+)?call\\s*:", RegexOption.IGNORE_CASE)
+
+    /**
+     * "End call:" at the very start of a GPT-Live delegation: the model, having
+     * said its goodbye, asks Conduit to close the call (GPT-Live has no
+     * function tools, so this stands in for end_conversation).
+     */
+    fun isEndCallMarker(request: String): Boolean = endCallMarker.containsMatchIn(request)
+
     fun asksToStop(utterance: String): Boolean = matchesSpokenCommand(utterance, stopPhrases)
 
     /** [WearWire.APPROVE_ONCE], [WearWire.DENY], or null when the words aren't an answer. */

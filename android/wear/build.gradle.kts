@@ -18,8 +18,11 @@ android {
         versionName = "0.1.0"
     }
 
-    // The phone ↔ watch wire, compiled into both apps (its tests live in :app).
+    // The phone ↔ watch wire, and the live voice protocols and sessions a
+    // direct call runs (Gemini Live, Grok), compiled into both apps (their
+    // tests live in :app).
     sourceSets["main"].java.srcDir("../wearwire/src/main/kotlin")
+    sourceSets["main"].java.srcDir("../livewire/src/main/kotlin")
 
     buildTypes {
         release {
@@ -63,5 +66,7 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.10.2")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.8.1")
+    // The direct call's sockets (Gemini Live, the host's audio bridge) and the relay's tool calls.
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
     debugImplementation("androidx.compose.ui:ui-tooling")
 }

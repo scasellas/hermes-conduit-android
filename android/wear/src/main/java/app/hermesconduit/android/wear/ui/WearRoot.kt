@@ -89,7 +89,8 @@ fun WearRoot(talkRequests: Int, talkSource: String) {
             composable("approval") { ApprovalDetailScreen(onDone = { nav.popBackStack() }) }
             composable("log") { LogScreen(onClear = { nav.navigate("log.clear") }) }
             composable("log.clear") { ConfirmClearScreen(onDone = { nav.popBackStack() }) }
-            composable("settings") { SettingsScreen() }
+            composable("settings") { SettingsScreen(navigate = { nav.navigate(it) }) }
+            composable("engine") { EnginePickerScreen(onDone = { nav.popBackStack() }) }
         }
     }
 }

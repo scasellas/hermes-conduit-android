@@ -4,17 +4,26 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Build
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Watch
+import androidx.compose.material.icons.filled.Work
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
@@ -22,12 +31,17 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.hermesconduit.android.appSettings
+import app.hermesconduit.android.core.HermesConnection
 import app.hermesconduit.android.core.L10n
+import app.hermesconduit.android.core.LinkState
+import app.hermesconduit.android.core.live.liveErrorMessage
 import app.hermesconduit.android.core.t
 import app.hermesconduit.android.hermes
 import app.hermesconduit.android.ui.components.ScreenScaffold
@@ -37,14 +51,20 @@ import app.hermesconduit.android.ui.components.SettingsSection
 import app.hermesconduit.wearwire.WearWire
 import com.google.android.gms.wearable.CapabilityClient
 import com.google.android.gms.wearable.Wearable
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 
 /**
- * Settings > Watch (iOS Voice settings > Apple Watch): whether Conduit is on
- * a Wear OS watch, whether the watch may take an approval's answer by voice,
- * a check of the host's Watch tool grants, and the call log to share for a
- * support question.
+ * Settings > Watch (iOS Voice settings > Apple Watch, WatchSettingsSection):
+ * whether Conduit is on a Wear OS watch, what a watch call may do on Hermes
+ * (jobs per call, approvals), GPT-Live's setup on the Hermes host, a check of
+ * the host's watch-tools grants, and the call log to share for a support
+ * question.
  */
 @Composable
 fun WatchSettingsPage(onBack: () -> Unit) {
@@ -53,34 +73,89 @@ fun WatchSettingsPage(onBack: () -> Unit) {
     val log = remember { WatchPhoneCallLog.get(context) }
     val scope = rememberCoroutineScope()
     val voiceApprovals by settings.bool(WatchSettings.VOICE_APPROVALS, false).collectAsStateWithLifecycle()
+    val storedJobs by settings.int(WatchJobSettings.JOBS_PER_CALL, WatchJobSettings.DEFAULT_JOBS_PER_CALL).collectAsStateWithLifecycle()
+    val jobsPerCall = WatchJobSettings.clamped(storedJobs)
     var status by remember { mutableStateOf<String?>(null) }
     var logBytes by remember { mutableLongStateOf(log.sizeBytes) }
     var confirmingClear by remember { mutableStateOf(false) }
     var grantCheck by remember { mutableStateOf<String?>(null) }
     var checking by remember { mutableStateOf(false) }
+    val gptLive = remember { WatchGPTLiveSetup(context.hermes, scope) }
+    val gptState by gptLive.state.collectAsStateWithLifecycle()
 
     LaunchedEffect(Unit) {
         status = watchStatus(context)
         WatchBridge.get(context).publishContext()
     }
+    LaunchedEffect(Unit) { gptLive.refresh() }
+    // Leaving the screen stops the setup's checks.
+    DisposableEffect(Unit) { onDispose { gptLive.stop() } }
 
     ScreenScaffold(t("Watch"), onBack) { padding ->
         SettingsColumn(padding) {
             SettingsSection(
                 t("Watch"),
-                footer = t("Open Conduit on your watch to talk to Hermes: the call starts right away, or with a tap if you turn off Call on open in the watch's settings. Each turn runs through Conduit on this phone, and calls are saved to your chats."),
+                footer = t("Open Conduit on your watch to talk to Hermes: the call starts right away, or with a tap if you turn off Call on open in the watch's settings. Gemini Live runs on the watch; GPT-Live and Grok run on your Hermes host. Calls keep going with your wrist down and your phone locked, and are saved to voice history."),
             ) {
                 SettingsRow(status ?: t("Checking for a watch…"), icon = Icons.Default.Watch)
             }
 
             SettingsSection(
+                t("Jobs"),
+                footer = t("Hermes jobs a Watch call can start, wrist up or down. Each runs as a normal Hermes chat under Voice Jobs, and Hermes' own approval settings apply."),
+            ) {
+                Row(
+                    Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 4.dp, bottom = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(Icons.Default.Work, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(
+                        if (jobsPerCall == 0) t("Jobs per Watch call: through the phone") else t("Jobs per Watch call: %s", jobsPerCall.toString()),
+                        modifier = Modifier.weight(1f).padding(start = 16.dp),
+                    )
+                    IconButton(onClick = { settings.set(WatchJobSettings.JOBS_PER_CALL, WatchJobSettings.clamped(jobsPerCall - 1)) }, enabled = jobsPerCall > 0) {
+                        Icon(Icons.Default.Remove, contentDescription = t("Fewer"))
+                    }
+                    IconButton(onClick = { settings.set(WatchJobSettings.JOBS_PER_CALL, WatchJobSettings.clamped(jobsPerCall + 1)) }, enabled = jobsPerCall < WatchJobSettings.MAXIMUM_JOBS_PER_CALL) {
+                        Icon(Icons.Default.Add, contentDescription = t("More"))
+                    }
+                }
+            }
+
+            SettingsSection(
                 t("Approve from the Watch"),
-                footer = if (voiceApprovals) t("An approval request shows on the watch with Approve once and Deny, and during a call you can also answer it by saying “approve” or “deny”. Voice only ever approves once.")
+                footer = if (voiceApprovals) t("A job's approval request shows on the Watch, and Gemini Live or Grok can also take your answer by voice. Voice only ever approves once. Text in a web page or a job's output could try to talk it into approving.")
                 else t("A job's approval request shows on the Watch with Approve once and Deny."),
             ) {
                 Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilterChip(selected = !voiceApprovals, onClick = { setVoiceApprovals(context, false) }, label = { Text(t("Tap")) })
-                    FilterChip(selected = voiceApprovals, onClick = { setVoiceApprovals(context, true) }, label = { Text(t("Tap or voice")) })
+                    FilterChip(selected = !voiceApprovals, enabled = jobsPerCall > 0, onClick = { setVoiceApprovals(context, false) }, label = { Text(t("Tap")) })
+                    FilterChip(selected = voiceApprovals, enabled = jobsPerCall > 0, onClick = { setVoiceApprovals(context, true) }, label = { Text(t("Tap or voice")) })
+                }
+            }
+
+            SettingsSection(
+                t("GPT-Live on the Watch"),
+                footer = t("Your Hermes host holds GPT-Live's call for the Watch, with a small runtime it sets up once. The first call sets it up too, but that can take a few minutes."),
+            ) {
+                SettingsRow(
+                    t("GPT-Live on the Watch"),
+                    icon = Icons.Default.GraphicEq,
+                    value = when (val s = gptState) {
+                        WatchGPTLiveSetup.State.Unknown -> t("Checking…")
+                        WatchGPTLiveSetup.State.Ready -> t("Ready")
+                        WatchGPTLiveSetup.State.Preparing -> t("Setting up on Hermes…")
+                        WatchGPTLiveSetup.State.NotSetUp -> t("Not set up yet")
+                        is WatchGPTLiveSetup.State.Failed -> s.reason
+                        is WatchGPTLiveSetup.State.Unavailable -> s.reason
+                    },
+                    trailing = when {
+                        gptState == WatchGPTLiveSetup.State.Preparing -> ({ CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp) })
+                        gptState == WatchGPTLiveSetup.State.Ready -> ({ Icon(Icons.Default.CheckCircle, contentDescription = null, tint = Color(0xFF2E7D32)) })
+                        else -> null
+                    },
+                )
+                if (gptLive.canPrepare(gptState)) {
+                    SettingsRow(t("Set up"), icon = Icons.Default.Build, onClick = gptLive::prepare)
                 }
             }
 
@@ -126,6 +201,81 @@ fun WatchSettingsPage(onBack: () -> Unit) {
             },
             dismissButton = { TextButton(onClick = { confirmingClear = false }) { Text(t("Cancel")) } },
         )
+    }
+}
+
+/**
+ * GPT-Live's WebRTC runtime on the Hermes host (watch-audio/status and
+ * /prepare, iOS `WatchGPTLiveSetup`): whether a watch call to GPT-Live can
+ * start at once.
+ */
+class WatchGPTLiveSetup(private val hermes: HermesConnection, private val scope: CoroutineScope) {
+    sealed interface State {
+        data object Unknown : State
+        data object Ready : State
+        data object Preparing : State
+        data object NotSetUp : State
+        data class Failed(val reason: String) : State
+        data class Unavailable(val reason: String) : State
+    }
+
+    private val client = WatchToolGrantClient(hermes)
+    private val _state = MutableStateFlow<State>(State.Unknown)
+    val state: StateFlow<State> = _state
+    private var polling: Job? = null
+
+    fun canPrepare(state: State) = state == State.NotSetUp || state is State.Failed
+
+    suspend fun refresh() {
+        if (hermes.link.value != LinkState.CONNECTED) {
+            _state.value = State.Unavailable(L10n.tr("Connect to Hermes to check."))
+            return
+        }
+        _state.value = try {
+            stateOf(client.audioStatus(hermes.profile.value))
+        } catch (_: Exception) {
+            State.Unavailable(L10n.tr("Your Hermes host doesn't offer GPT-Live for the Watch. Update the Conduit notifier plugin."))
+        }
+    }
+
+    fun prepare() {
+        val profile = hermes.profile.value
+        _state.value = State.Preparing
+        polling?.cancel()
+        polling = scope.launch {
+            try {
+                _state.value = stateOf(client.prepareAudio(profile))
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _state.value = State.Failed(liveErrorMessage(e))
+                return@launch
+            }
+            repeat(MAX_POLLS) {
+                if (_state.value != State.Preparing) return@launch
+                delay(POLL_INTERVAL_MS)
+                runCatching { client.audioStatus(profile) }.getOrNull()?.let { _state.value = stateOf(it) }
+            }
+        }
+    }
+
+    fun stop() {
+        polling?.cancel()
+        polling = null
+    }
+
+    companion object {
+        /** How often a setup in progress is checked while the screen is up. */
+        const val POLL_INTERVAL_MS = 3_000L
+        /** Checks give up after this many; the next visit checks again. */
+        const val MAX_POLLS = 120
+
+        fun stateOf(runtime: WatchToolGrantClient.AudioRuntime): State = when (runtime.runtime) {
+            "ready" -> State.Ready
+            "preparing" -> State.Preparing
+            "failed" -> State.Failed(runtime.reason ?: L10n.tr("Hermes couldn't set up GPT-Live for the Watch."))
+            else -> State.NotSetUp
+        }
     }
 }
 

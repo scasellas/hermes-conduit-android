@@ -11,9 +11,12 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Chat
-import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Bolt
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Gavel
+import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.runtime.Composable
@@ -53,6 +56,7 @@ import androidx.wear.compose.material.Text
 import androidx.wear.compose.material.TimeText
 import androidx.wear.compose.material.ToggleChip
 import app.hermesconduit.android.wear.BuildConfig
+import app.hermesconduit.android.wear.WatchVoiceEngine
 import app.hermesconduit.android.wear.t
 import app.hermesconduit.android.wear.wearApp
 import app.hermesconduit.wearwire.WearApproval
@@ -103,6 +107,7 @@ fun HomeScreen(onTalk: () -> Unit, navigate: (String) -> Unit) {
     val reachable by app.link.reachable.collectAsStateWithLifecycle()
     val context by app.link.phoneContext.collectAsStateWithLifecycle()
     val approvals by Approvals.list.collectAsStateWithLifecycle()
+    val engine by app.prefs.engine.collectAsStateWithLifecycle()
     LaunchedEffect(Unit) {
         app.link.refresh()
         Approvals.refresh(app)
@@ -115,6 +120,24 @@ fun HomeScreen(onTalk: () -> Unit, navigate: (String) -> Unit) {
             ) { VoiceOrb(OrbMood.READY, size = 84.dp) }
         }
         item { Text(t("Talk to Hermes"), style = MaterialTheme.typography.title3) }
+        item {
+            val notSetUp = engine.callVoice?.let { context?.notSetUp(it) } == true
+            Chip(
+                onClick = { navigate("engine") },
+                label = { Text(engine.title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                secondaryLabel = {
+                    Text(
+                        if (notSetUp) t("Not set up on your Hermes host") else engine.detail,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        color = if (notSetUp) WatchColors.attention else MaterialTheme.colors.onSurfaceVariant,
+                    )
+                },
+                icon = { Icon(engineIcon(engine), contentDescription = null, tint = WatchColors.aura) },
+                colors = ChipDefaults.secondaryChipColors(),
+                modifier = Modifier.fillMaxWidth().semantics { contentDescription = t("Voice: %s", engine.title) },
+            )
+        }
         if (!reachable) item { Footnote(t("Phone not connected right now"), WatchColors.attention) }
         else if (context?.signedIn == false) item { Footnote(t("Sign in to Hermes in Conduit on your phone."), WatchColors.attention) }
         item { NavChip(t("Recent chats"), Icons.Default.Chat) { navigate("chats") } }
@@ -317,9 +340,10 @@ fun ConfirmClearScreen(onDone: () -> Unit) {
 }
 
 @Composable
-fun SettingsScreen() {
+fun SettingsScreen(navigate: (String) -> Unit) {
     val app = LocalContext.current.wearApp
     val callOnOpen by app.prefs.callOnOpen.collectAsStateWithLifecycle()
+    val engine by app.prefs.engine.collectAsStateWithLifecycle()
     val reachable by app.link.reachable.collectAsStateWithLifecycle()
     WatchList {
         item { ListHeader { Text(t("Settings")) } }
@@ -333,14 +357,62 @@ fun SettingsScreen() {
             )
         }
         item { Footnote(t("Opening Conduit starts a call right away. Turn this off to start each call with a tap.")) }
+        item { NavChip(t("Voice"), Icons.Default.GraphicEq, secondary = engine.title) { navigate("engine") } }
         item {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 Icon(Icons.Default.PhoneAndroid, contentDescription = null, tint = if (reachable) MaterialTheme.colors.onSurface else MaterialTheme.colors.onSurfaceVariant)
                 Text(if (reachable) t("Phone connected") else t("Phone not connected right now"), style = MaterialTheme.typography.caption2)
             }
         }
-        item { Footnote(t("Calls need Conduit on your phone: each turn runs through it. Once a call is on, it carries on with your wrist down.")) }
+        item { Footnote(t("Calls need Conduit on your phone to start. Once a call is on, it carries on with your wrist down and your phone locked.")) }
         item { Footnote(t("Version %s", "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})")) }
+    }
+}
+
+// endregion
+
+// region Voice
+
+private fun engineIcon(engine: WatchVoiceEngine): androidx.compose.ui.graphics.vector.ImageVector = when (engine) {
+    WatchVoiceEngine.GEMINI_LIVE -> Icons.Default.AutoAwesome
+    WatchVoiceEngine.GPT_LIVE -> Icons.Default.GraphicEq
+    WatchVoiceEngine.GROK_LIVE -> Icons.Default.Bolt
+    WatchVoiceEngine.PHONE -> Icons.Default.PhoneAndroid
+}
+
+/** Picks the voice the next call talks to (WatchEnginePicker). */
+@Composable
+fun EnginePickerScreen(onDone: () -> Unit) {
+    val app = LocalContext.current.wearApp
+    val engine by app.prefs.engine.collectAsStateWithLifecycle()
+    val context by app.link.phoneContext.collectAsStateWithLifecycle()
+    WatchList {
+        item { ListHeader { Text(t("Voice")) } }
+        items(WatchVoiceEngine.entries.toList()) { choice ->
+            val notSetUp = choice.callVoice?.let { context?.notSetUp(it) } == true
+            Chip(
+                onClick = { app.prefs.setEngine(choice); onDone() },
+                label = { Text(choice.title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                secondaryLabel = {
+                    Text(
+                        if (notSetUp) t("Not set up on your Hermes host") else choice.detail,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        color = if (notSetUp) WatchColors.attention else MaterialTheme.colors.onSurfaceVariant,
+                    )
+                },
+                icon = {
+                    Icon(
+                        if (choice == engine) Icons.Default.Check else engineIcon(choice),
+                        contentDescription = if (choice == engine) t("Selected") else null,
+                        tint = WatchColors.aura,
+                    )
+                },
+                colors = if (choice == engine) ChipDefaults.primaryChipColors() else ChipDefaults.secondaryChipColors(),
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+        item { Footnote(t("Your phone sets up each call with your Hermes profile's memory, persona and voice settings. Calls are saved to your phone's voice history.")) }
     }
 }
 

@@ -500,11 +500,17 @@ Files: `Views/CapabilitiesView.swift` (206), `Views/Capabilities/CapabilityCompo
   - Shared: `Shared/WatchVoice/*` (about 3.2k); `Views/LiquidOrb`.
 - **Wire:** `PLUGIN/watch-tools/grant`, `/watch-tools/revoke`, `/watch-audio/prepare`, `/watch-audio/status`; relay `v1/watch-tools/grants/{id}`, `/v1/rings/{id}/settled`.
 - **Size:** ~14k. Port last.
-- **Wear OS port (`android/wear`, phone side `app/.../watch/`, shared wire `android/wearwire`):**
-  - Bridge call only: the watch recognizes speech, sends each utterance over the Data Layer (`/conduit/voice/turn`), the phone's `WatchBridgeService` runs it with `prompt.submit` (surface `voice`, `voice_turn`) and streams the reply back (`/conduit/voice/reply`), which the watch speaks with TextToSpeech. Tap the orb to interrupt (`session.interrupt`).
+- **Wear OS port (`android/wear`, phone side `app/.../watch/`, shared wire `android/wearwire`, shared live voice `android/livewire`):**
+  - Phone voice ("Hermes through your phone"): the watch recognizes speech, sends each utterance over the Data Layer (`/conduit/voice/turn`), the phone's `WatchBridgeService` runs it with `prompt.submit` (surface `voice`, `voice_turn`) and streams the reply back (`/conduit/voice/reply`), which the watch speaks with TextToSpeech. Tap the orb to interrupt (`session.interrupt`).
   - Home: Talk to Hermes, recent chats (continue one by voice), pending approvals (Approve once / Deny), call log, Call on open. Tile, complication, `conduitwatch://talk` and a static shortcut open straight into a call.
   - Phone: Settings > Watch (`settings.watch`): watch status, Approve from the Watch (Tap / Tap or voice), a watch-tools grant/revoke check, call log share/clear.
-  - Not ported: direct Gemini Live on the watch and GPT-Live/Grok audio bridges (WatchDirectCallModel, WatchGeminiSocket, WatchGrokBridgeSocket, WatchDirectBroker, watch-audio runtime setup). They follow the phone's live-voice port (§6); `WatchToolGrantClient` is ported for that path. Jobs per Watch call (relay jobs) belong to the direct path too.
+  - Live calls (ported): the watch's voice picker (Gemini Live, GPT-Live, Grok, plus Android's turn-by-turn "Hermes through your phone", which is also how a call continues one of the phone's chats) says when the phone found a voice not set up (`PhoneContext.voices`).
+    - Gemini Live runs on the watch (`wear/.../WatchDirectCall`, iOS WatchDirectCallModel) on the phone's own `GeminiLiveSession`, with single-use tokens from the phone and, past resuming with the phone out of reach, from Hermes through the grant (`live_token`); stall prompts and fresh-session rejoins as on iOS.
+    - Grok runs the same conversation on `GrokLiveSession` over the grant's audio bridge (`WatchGrokBridgeSocket`); GPT-Live streams to the host's bridge (`WatchBridgeLiveCall`, iOS WatchBridgeCallModel) with its delegations as relay jobs, chat finds/reads and lookups.
+    - The phone's `watch/WatchDirectBroker` builds each setup or briefing, mints tokens, runs tool calls on `GeminiLiveToolBridge`, answers job polls, asks for, renews and revokes the grant (and GPT-Live's WebRTC runtime), keeps `WatchDirectCallLedger` across restarts and saves the call to voice history.
+    - Settings > Watch: jobs per Watch call (0–20), Approve from the Watch, GPT-Live on the Watch (status and Set up).
+    - Wire: `WatchVoiceWire` (Swift Codable JSON) as Data Layer requests on `/conduit/wv` (MessageClient.sendRequest, answered in `WatchBridgeService.onRequest`) and queued DataItems under `/conduit/wvq/`; the relay sealing (`WatchToolSeal`, `WatchAudioBridgeWire`) is checked against the plugin's test vectors. The Gemini/Grok/GPT-Live protocols and sessions moved to `android/livewire`, compiled into both apps.
+  - Not ported: calls from Hermes ringing on the watch (HermesWatchCalls, HermesRingHandoff: the `ring` field stays empty) and the watchOS-only audio-session reactivation (FB24377808), path monitor and timeline logging. Wear OS has no Control widget; the tile is its counterpart, and the complication covers the iOS families.
 
 ## 27. CarPlay (Android analog: Android Auto)
 

@@ -3,6 +3,7 @@ package app.hermesconduit.android.wear
 import android.content.Context
 import android.net.Uri
 import app.hermesconduit.wearwire.PhoneContext
+import app.hermesconduit.wearwire.WatchVoiceWire
 import app.hermesconduit.wearwire.WearMessage
 import app.hermesconduit.wearwire.WearWire
 import com.google.android.gms.wearable.CapabilityClient
@@ -116,6 +117,27 @@ class PhoneLink(private val context: Context, private val scope: CoroutineScope)
                 collector.cancel()
             }
         }
+
+    /**
+     * A live call's request to the phone, answered with its reply (iOS
+     * sendMessage with a reply handler). Throws when the phone can't be
+     * reached or doesn't answer within [timeoutMs]; null for an empty reply.
+     */
+    suspend fun request(message: WatchVoiceWire.Message, timeoutMs: Long = 15_000): WatchVoiceWire.Message? {
+        val node = phone ?: run { refresh(); phone } ?: throw java.io.IOException(L10n.tr("Couldn't reach Conduit on your phone."))
+        val reply = withTimeoutOrNull(timeoutMs) { messages.sendRequest(node.id, WatchVoiceWire.PATH, WatchVoiceWire.encode(message)).await() }
+            ?: throw java.io.IOException(L10n.tr("Conduit on the phone didn't answer in time."))
+        if (reply.isEmpty()) return null
+        return WatchVoiceWire.decode(reply) ?: throw java.io.IOException(L10n.tr("Conduit on the phone sent something this Watch app can't read."))
+    }
+
+    /** Queues a live call's message for the phone (its end, a job): it arrives whenever Conduit next runs there. */
+    fun queue(message: WatchVoiceWire.Message): Boolean {
+        val request = PutDataMapRequest.create(WatchVoiceWire.QUEUE_PREFIX + UUID.randomUUID()).apply {
+            dataMap.putByteArray(WearWire.DATA_KEY, WatchVoiceWire.encode(message))
+        }
+        return runCatching { data.putDataItem(request.asPutDataRequest().setUrgent()) }.isSuccess
+    }
 
     /** Queues a call log line for the phone: it arrives even when the phone isn't reachable now. */
     fun queueLog(line: String) {
