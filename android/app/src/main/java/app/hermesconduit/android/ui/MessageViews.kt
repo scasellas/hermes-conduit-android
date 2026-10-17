@@ -238,6 +238,9 @@ private fun SystemRow(message: ChatMessage) {
                 }
             }
         }
+        app.hermesconduit.android.ui.voice.live.VoiceCallChatLink.DISPLAY_KIND,
+        app.hermesconduit.android.ui.voice.live.VoiceCallChatLink.ORIGIN_DISPLAY_KIND,
+        -> app.hermesconduit.android.ui.voice.live.VoiceCallMarkerCard(message)
         "slash" -> Surface(
             color = MaterialTheme.colorScheme.surfaceContainerLow,
             shape = RoundedCornerShape(12.dp),

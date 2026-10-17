@@ -568,7 +568,7 @@ private fun TranscriptList(
 }
 
 @Composable
-private fun Bubble(entry: LiveTranscriptEntry, label: String) {
+internal fun Bubble(entry: LiveTranscriptEntry, label: String) {
     Column(Modifier.fillMaxWidth().semantics(mergeDescendants = true) { contentDescription = label }, horizontalAlignment = if (entry.fromUser) Alignment.End else Alignment.Start) {
         Surface(
             color = if (entry.fromUser) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh,

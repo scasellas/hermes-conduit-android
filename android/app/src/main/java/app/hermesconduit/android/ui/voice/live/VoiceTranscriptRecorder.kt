@@ -24,6 +24,8 @@ class VoiceTranscriptRecorder(
     val engine: String,
     val profile: String,
     resumingSessionId: String? = null,
+    /** A reconnect in the same chat goes on as this earlier call: same call id and turns, so the host keeps one call and the chat one card. */
+    continuing: VoiceTranscriptRecorder? = null,
     private val save: suspend (VoiceTranscriptSaveRequest) -> VoiceTranscriptSaveResult,
     /** The title a new row gets, asked for when the first save creates it. */
     private val title: suspend (List<VoiceTranscriptTurn>) -> String,
@@ -53,8 +55,28 @@ class VoiceTranscriptRecorder(
     /** Background jobs this call started, tagged with its row once the call ends. */
     val jobSessionIds = mutableListOf<String>()
 
+    /** A reconnect in the same chat went on as this call: the newer recorder now saves all of it. */
+    var handedOver = false
+        private set
+
     private val recordedEntries = mutableSetOf<String>()
     private val flushLock = Mutex()
+
+    init {
+        // Turns the earlier save still has in flight are sent again and skipped by the host.
+        if (continuing != null) {
+            callId = continuing.callId
+            sessionId = continuing.sessionId
+            chatId = continuing.chatId
+            savedWithChat = continuing.savedWithChat
+            _turns += continuing.turns
+            written = continuing.written
+            isDisabled = continuing.isDisabled
+            newRowTitle = continuing.newRowTitle
+            jobSessionIds += continuing.jobSessionIds
+            continuing.handedOver = true
+        }
+    }
 
     val hasUserSpeech: Boolean get() = _turns.any { it.role == "user" }
     val unsavedTurns: List<VoiceTranscriptTurn> get() = _turns.filter { it.index >= written }
@@ -86,7 +108,8 @@ class VoiceTranscriptRecorder(
     suspend fun flush() = flushLock.withLock { performFlush() }
 
     private suspend fun performFlush() {
-        if (isDisabled) return
+        // A reconnect's recorder carries the call on, and alone recovers it.
+        if (isDisabled || handedOver) return
         // A call where the user never spoke isn't worth a row, nor an append to one.
         if (!hasUserSpeech) return
         val pending = unsavedTurns

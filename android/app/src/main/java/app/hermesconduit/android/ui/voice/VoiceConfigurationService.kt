@@ -15,6 +15,7 @@ import app.hermesconduit.android.model.VoiceTranscriptSaveRequest
 import app.hermesconduit.android.model.VoiceTranscriptSaveResult
 import app.hermesconduit.android.model.obj
 import app.hermesconduit.android.model.bool
+import app.hermesconduit.android.model.long
 import app.hermesconduit.android.model.str
 import app.hermesconduit.android.net.DashboardHttpException
 import kotlinx.coroutines.async
@@ -29,12 +30,15 @@ import kotlinx.serialization.json.put
 /** Thin REST seam so the voice configuration logic is testable without a dashboard. */
 interface VoiceConfigurationRequester {
     suspend fun get(path: String): JsonObject
+    /** A GET with query parameters of its own (the profile is added as for `get`). */
+    suspend fun get(path: String, query: Map<String, String>): JsonObject = get(path)
     suspend fun send(method: String, path: String, body: JsonObject): JsonObject
 }
 
 class HermesVoiceRequester(private val hermes: HermesConnection, private val profile: String) : VoiceConfigurationRequester {
     private fun query() = mapOf("profile" to profile.takeIf { it != "default" })
     override suspend fun get(path: String): JsonObject = hermes.rest { it.getJson(path, query(), timeoutMs = 12_000) }
+    override suspend fun get(path: String, query: Map<String, String>): JsonObject = hermes.rest { it.getJson(path, query() + query, timeoutMs = 12_000) }
     override suspend fun send(method: String, path: String, body: JsonObject): JsonObject =
         hermes.rest { it.sendJson(method, path, body, query(), timeoutMs = 12_000) }
 }
@@ -285,7 +289,35 @@ class VoiceHistoryClient(private val requester: VoiceConfigurationRequester) {
         }
     }
 
+    /** The calls kept with a chat, oldest first. */
+    suspend fun chatCalls(chatId: String, callId: String? = null): List<app.hermesconduit.android.ui.voice.live.VoiceChatCall> = mapped {
+        val query = buildMap { put("chat_id", chatId); callId?.let { put("call_id", it) } }
+        app.hermesconduit.android.ui.voice.live.VoiceChatCall.parse(requester.get(CHAT_CALLS_PATH, query)) ?: throw HistoryException.Malformed()
+    }
+
+    /** The stored resume summary, or null when there is none yet. */
+    suspend fun summary(sessionId: String): app.hermesconduit.android.core.live.VoiceResumeSummary? = mapped {
+        parseSummary(requester.get(SUMMARY_PATH, mapOf("session_id" to sessionId)))
+    }
+
+    suspend fun storeSummary(summary: app.hermesconduit.android.core.live.VoiceResumeSummary, sessionId: String) {
+        mapped {
+            requester.send("POST", SUMMARY_PATH, buildJsonObject {
+                put("session_id", sessionId)
+                put("text", summary.text)
+                put("covers", summary.covers)
+            })
+        }
+    }
+
     companion object {
+        fun parseSummary(response: JsonObject): app.hermesconduit.android.core.live.VoiceResumeSummary? {
+            if (response["ok"].bool != true || response["available"].bool != true) return null
+            val text = response["text"].str?.takeIf { it.isNotEmpty() } ?: return null
+            val covers = response["covers"].long?.toInt()?.takeIf { it > 0 } ?: return null
+            return app.hermesconduit.android.core.live.VoiceResumeSummary(text, covers)
+        }
+
         const val SESSIONS_PATH = "api/plugins/conduit_push/voice/sessions"
         const val TAGS_PATH = "api/plugins/conduit_push/voice/tags"
         const val SUMMARY_PATH = "api/plugins/conduit_push/voice/summary"

@@ -41,14 +41,6 @@ sealed interface VoiceChatReadOutcome {
     data class Failed(val reason: String) : VoiceChatReadOutcome
 }
 
-/** One text turn of a saved chat, as a call sees it. */
-data class VoiceResumeTurn(val fromUser: Boolean, val text: String)
-
-/** What a call reading a chat gets: a summary of its older turns (when any) and its latest turns word for word. */
-data class VoiceResumeContext(val summary: String?, val recent: List<VoiceResumeTurn>) {
-    val isEmpty: Boolean get() = summary.isNullOrEmpty() && recent.isEmpty()
-}
-
 /**
  * "Find the chat where we talked about the GPU setup and open it": a live
  * call looks up the user's earlier Hermes chats (`GET /api/sessions/search`)

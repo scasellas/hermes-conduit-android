@@ -274,6 +274,7 @@ fun ChatContent(
     if (showDelegates) {
         DelegatesSheet(delegates, onDismiss = { showDelegates = false })
     }
+    app.hermesconduit.android.ui.voice.live.VoiceChatCallTranscriptHost()
     chat.modelConfirm?.let { confirm ->
         AlertDialog(
             onDismissRequest = actions::cancelModelConfirm,
@@ -298,6 +299,8 @@ private fun LinkDot(link: LinkState) {
 @Composable
 private fun Transcript(chat: ChatState, modifier: Modifier, actions: ChatActions) {
     val listState = rememberLazyListState()
+    // With the cards of voice calls started from this chat (#556).
+    val shown = app.hermesconduit.android.ui.voice.live.rememberMessagesWithCallCards(chat)
     val last = chat.messages.lastOrNull()
     // Follow the stream while the reader is at (or near) the bottom.
     LaunchedEffect(chat.messages.size, last?.content?.length, last?.toolCalls?.size) {
@@ -332,7 +335,7 @@ private fun Transcript(chat: ChatState, modifier: Modifier, actions: ChatActions
                 }
             }
         }
-        items(chat.messages, key = { it.id }) { message -> MessageRow(message, actions, canAct = !chat.running || message != chat.messages.lastOrNull()) }
+        items(shown, key = { it.id }) { message -> MessageRow(message, actions, canAct = !chat.running || message != chat.messages.lastOrNull()) }
         item(key = "bottom") { Spacer(Modifier.size(1.dp)) }
     }
 }

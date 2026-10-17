@@ -369,6 +369,8 @@ class VoiceHub private constructor(private val context: Context) {
                     _outboxBlocked.value = false
                     outbox = VoiceTranscriptOutbox(outbox.entries - entry)
                     if (entry.jobSessionIds.isNotEmpty()) tagSessions(entry.jobSessionIds, VoiceSessionTagKind.JOB, result.sessionId ?: result.chatId, entry.request.title)
+                    // The chat the call was attached to gets its card now that the call is saved.
+                    liveCalls.linkSavedCall(entry.chatAttachment, result.sessionId, result.chatId, entry.profile)
                 } catch (_: VoiceHistoryClient.HistoryException.PluginMissing) {
                     _outboxBlocked.value = true
                     break

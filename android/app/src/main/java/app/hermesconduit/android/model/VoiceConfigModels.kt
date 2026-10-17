@@ -600,7 +600,15 @@ data class VoiceTranscriptSaveResult(val sessionId: String?, val written: Int, v
  * takes them; keyed by dashboard and profile.
  */
 data class VoiceTranscriptOutbox(val entries: List<Entry> = emptyList()) {
-    data class Entry(val dashboard: String, val profile: String, val request: VoiceTranscriptSaveRequest, val queuedAtMs: Long, val jobSessionIds: List<String> = emptyList())
+    data class Entry(
+        val dashboard: String,
+        val profile: String,
+        val request: VoiceTranscriptSaveRequest,
+        val queuedAtMs: Long,
+        val jobSessionIds: List<String> = emptyList(),
+        /** The chat the call was attached to (a `VoiceCallAttachment`'s JSON): its card is added once a retry saves the call. */
+        val chatAttachment: JsonObject? = null,
+    )
 
     fun adding(entry: Entry): VoiceTranscriptOutbox {
         val list = entries.filter { it.request.callId != entry.request.callId } + entry
@@ -619,7 +627,7 @@ data class VoiceTranscriptOutbox(val entries: List<Entry> = emptyList()) {
                         mapOf(
                             "dashboard" to JsonPrimitive(e.dashboard), "profile" to JsonPrimitive(e.profile), "request" to e.request.toJson(),
                             "queuedAt" to JsonPrimitive(e.queuedAtMs), "jobSessionIDs" to JsonArray(e.jobSessionIds.map(::JsonPrimitive)),
-                        ),
+                        ) + (e.chatAttachment?.let { mapOf("chatAttachment" to it) } ?: emptyMap()),
                     )
                 },
             ),
@@ -640,6 +648,7 @@ data class VoiceTranscriptOutbox(val entries: List<Entry> = emptyList()) {
                     e["request"].obj?.let(VoiceTranscriptSaveRequest::fromJson) ?: return@mapNotNull null,
                     e["queuedAt"].long ?: 0,
                     e["jobSessionIDs"].arr?.mapNotNull { it.str }.orEmpty(),
+                    e["chatAttachment"].obj,
                 )
             }.orEmpty()
             return VoiceTranscriptOutbox(entries)

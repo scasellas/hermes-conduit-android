@@ -90,6 +90,7 @@ private fun GeminiLiveSettings(vm: VoiceSettingsViewModel, prefs: VoiceProfilePr
     val calls = vm.hub.liveCalls
     SettingsSection(t("Gemini Live")) {
         Footnote(t("Talk with Gemini Live instead of the Hermes speech pipeline. Hermes still does the work: Gemini starts background jobs on this profile and tells you their results. The API key stays on your Hermes server. Approvals are never given by voice."))
+        LiveVoiceSetupLink(app.hermesconduit.android.model.LiveVoiceMode.GEMINI_LIVE)
         AvailabilityRow(t("Check Gemini Live")) {
             when (val status = calls.tokenClient.availability()) {
                 is GeminiLiveAvailability.Available -> true to L10n.tr("Available (%s)", status.model)
@@ -127,6 +128,7 @@ private fun GPTLiveSettings(vm: VoiceSettingsViewModel, prefs: VoiceProfilePrefe
     var confirmApi by remember { mutableStateOf(false) }
     SettingsSection(t("GPT-Live")) {
         Footnote(t("Talk with GPT-Live on the ChatGPT subscription your Hermes server is signed in to, instead of the Hermes speech pipeline. Hermes still does the work: GPT-Live hands requests to background jobs on this profile. The sign-in stays on your Hermes server, and it never falls back to API billing. Turning this on turns Gemini Live and Grok Live off."))
+        LiveVoiceSetupLink(app.hermesconduit.android.model.LiveVoiceMode.GPT_LIVE)
         AvailabilityRow(t("Check GPT-Live")) {
             when (val status = calls.gptClient.availability(billing)) {
                 is GPTLiveAvailability.Available -> true to (status.voice?.let { L10n.tr("Available (%s, voice %s)", status.model, it) } ?: L10n.tr("Available (%s)", status.model))
@@ -196,6 +198,7 @@ private fun GrokLiveSettings(vm: VoiceSettingsViewModel, prefs: VoiceProfilePref
     val calls = vm.hub.liveCalls
     SettingsSection(t("Grok Live")) {
         Footnote(t("Talk with Grok Live, xAI's realtime voice model, instead of the Hermes speech pipeline. Hermes still does the work: Grok hands requests to background jobs on this profile. Your Hermes server connects to xAI with its SuperGrok sign-in (or its XAI_API_KEY), which stays on the server. Turning this on turns Gemini Live and GPT-Live off."))
+        LiveVoiceSetupLink(app.hermesconduit.android.model.LiveVoiceMode.GROK_LIVE)
         AvailabilityRow(t("Check Grok Live")) {
             when (val status = calls.grokClient.availability()) {
                 is GrokLiveAvailability.Available -> {

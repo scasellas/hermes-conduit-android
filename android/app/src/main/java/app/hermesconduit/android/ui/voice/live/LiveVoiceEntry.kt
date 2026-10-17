@@ -28,6 +28,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import app.hermesconduit.android.core.AppLink
 import app.hermesconduit.android.core.L10n
 import app.hermesconduit.android.core.live.GPTLiveBilling
 import app.hermesconduit.android.core.t
@@ -47,22 +48,39 @@ class AppChatHost(private val app: AppViewModel) : LiveCallChatHost {
     override fun listedChats(): List<Triple<String, String, Long?>> = app.sessions.value.sessions.map { Triple(it.id, it.title, it.lastActiveMs) }
     override fun respondApproval(choice: String) = app.respondApproval(choice)
     override fun answerClarify(request: ClarifyRequest, answers: List<String>) = app.answerClarify(request, answers)
+    override fun openBotChat(profile: String) = app.handleLink(AppLink.Bot(profile))
+    override fun storedId(runtimeId: String): String? =
+        app.sessions.value.sessions.firstOrNull { it.runtimeId == runtimeId || runtimeId in it.alternateIds }?.id?.takeIf { it != runtimeId }
+
+    /** One host per app view model: the chat screen and the call's screens can bind it at once. */
+    override fun equals(other: Any?) = other is AppChatHost && other.app === app
+    override fun hashCode() = System.identityHashCode(app)
 
     private companion object {
         const val SPOKEN_PROMPT_SURFACE = "voice-live"
     }
 }
 
-/** Binds the activity's chat to the live calls while `content` is up. */
+/** Binds the activity's chat to the live calls while `content` is up (the chat screen and the call's screens each do). */
 @Composable
-private fun BindChatHost() {
+internal fun BindChatHost() {
     val context = LocalContext.current
     val app = activityAppViewModel() ?: return
     val hub = remember { VoiceHub.get(context) }
     DisposableEffect(app) {
         val host = AppChatHost(app)
-        hub.liveCalls.chatHost = host
-        onDispose { if (hub.liveCalls.chatHost === host) hub.liveCalls.chatHost = null }
+        val calls = hub.liveCalls
+        if (calls.chatHost != host) {
+            calls.chatHost = host
+            calls.chatHostBindings = 0
+        }
+        calls.chatHostBindings += 1
+        onDispose {
+            if (calls.chatHost == host) {
+                calls.chatHostBindings -= 1
+                if (calls.chatHostBindings <= 0) calls.chatHost = null
+            }
+        }
     }
 }
 

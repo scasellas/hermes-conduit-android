@@ -34,7 +34,11 @@ import app.hermesconduit.android.core.live.OkHttpLiveSocket
 import app.hermesconduit.android.core.live.VoiceChatFinder
 import app.hermesconduit.android.core.live.VoiceChatMatch
 import app.hermesconduit.android.core.live.VoiceResumeContext
+import app.hermesconduit.android.core.live.VoiceCallTitles
+import app.hermesconduit.android.core.live.VoiceResumePlan
+import app.hermesconduit.android.core.live.VoiceResumeSummary
 import app.hermesconduit.android.core.live.VoiceResumeTurn
+import app.hermesconduit.android.model.VoiceTranscriptTurn
 import app.hermesconduit.android.core.live.isMissingRoute
 import app.hermesconduit.android.core.live.profileQuery
 import app.hermesconduit.android.model.ChatMessage
@@ -90,6 +94,10 @@ interface LiveCallChatHost {
     fun respondApproval(choice: String)
     /** Answers the open chat's pending question. */
     fun answerClarify(request: app.hermesconduit.android.model.ClarifyRequest, answers: List<String>)
+    /** Opens a bot's Bot Chat (a call card from a Bot Chat leads back there). */
+    fun openBotChat(profile: String) {}
+    /** The stored id the app's session list knows for a runtime id, if any. */
+    fun storedId(runtimeId: String): String? = null
 }
 
 /**
@@ -107,6 +115,8 @@ class LiveVoiceCalls(private val context: Context, private val hub: VoiceHub) {
 
     /** The chat on screen, set by the app's main screen; null leaves calls unattached. */
     @Volatile var chatHost: LiveCallChatHost? = null
+    /** How many screens hold [chatHost] bound (BindChatHost). */
+    internal var chatHostBindings = 0
 
     private val request: LiveDashboardRequest = { method, path, query, body, timeoutMs ->
         hermes.rest { api ->
@@ -158,6 +168,7 @@ class LiveVoiceCalls(private val context: Context, private val hub: VoiceHub) {
     private fun style() = LiveVoiceStyle.of(prefs())
     private fun hasMicrophonePermission() = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
     private val talkOver: () -> Boolean = { prefs().liveVoiceSpeakerBargeIn == true }
+    private val headsetMute = HeadsetMicrophoneMute(context)
 
     /** The live mode the profile has on, if any. */
     fun enabledMode(preferences: VoiceProfilePreferences = prefs()): LiveVoiceMode? = when {
@@ -195,6 +206,7 @@ class LiveVoiceCalls(private val context: Context, private val hub: VoiceHub) {
                     scope = scope,
                     tokens = tokenClient,
                     systemInstruction = GeminiLiveConversationController.instructions(search, memory, personality, style().answerLength) +
+                        resumeContext?.instructionBlock.orEmpty() +
                         hermesCallBlock(delegation = false) + threadInstructions(delegation = false) + hostToolHint(LiveVoiceMode.GEMINI_LIVE) +
                         LiveVoiceStyle.askFirstInstructions(jobs.asksBeforeSending) + style().instructions,
                     functions = GeminiLiveToolBridge.declarations(
@@ -230,6 +242,7 @@ class LiveVoiceCalls(private val context: Context, private val hub: VoiceHub) {
                 val memory = memory
                 val instructions = GeminiLiveConversationController.instructions(GeminiLiveSearchSource.GROK, memory, personality, style().answerLength) +
                     GrokLiveProtocol.grokInstructions(System.currentTimeMillis(), TimeZone.getDefault()) +
+                    resumeContext?.instructionBlock.orEmpty() +
                     hermesCallBlock(delegation = false) + threadInstructions(delegation = false) + hostToolHint(LiveVoiceMode.GROK_LIVE) +
                     LiveVoiceStyle.askFirstInstructions(jobs.asksBeforeSending) + style().instructions
                 GrokLiveSession(
@@ -267,6 +280,7 @@ class LiveVoiceCalls(private val context: Context, private val hub: VoiceHub) {
                 GPTLiveSession(
                     scope = scope,
                     client = gptClient,
+                    history = resumeContext?.gptLiveHistory.orEmpty(),
                     voice = if (callBilling() == GPTLiveBilling.API) prefs().gptLiveAPIVoice else prefs().gptLiveVoice,
                     briefing = gptBriefing(),
                     // A call Hermes made opens with its brief instead (#449), spoken first rather than waiting for the user.
@@ -299,6 +313,7 @@ class LiveVoiceCalls(private val context: Context, private val hub: VoiceHub) {
 
     private fun gptBriefing(): String =
         GPTLiveConversationController.briefing(memory, personality, style().answerLength) +
+            resumeContext?.summaryInstructionBlock.orEmpty() +
             hermesCallBlock(delegation = true) + threadInstructions(delegation = true) + hostToolHint(LiveVoiceMode.GPT_LIVE) +
             (if (supportsHermesCalls()) GPTLiveConversationController.CALL_ME_RULE else "") +
             LiveHostTools.gptLiveRules(jobs.hostTools) +
@@ -411,12 +426,20 @@ class LiveVoiceCalls(private val context: Context, private val hub: VoiceHub) {
         LiveVoiceMode.entries.filter { it != mode }.forEach(::stop)
         _mode.value = mode
         _minimised.value = false
-        if (isActive(mode)) return
-        jobs.attachLiveThread(thread)
+        if (isActive(mode)) {
+            // A call already running doesn't take a pending Resume Call, and a later unrelated call must not.
+            pendingResume = null
+            return
+        }
+        // Resume Call goes back to the chat the saved call was started from (or to none), not the call's own row on screen.
+        val resume = pendingResume?.takeIf { System.currentTimeMillis() - it.atMs <= PENDING_RESUME_MS }
+        jobs.attachLiveThread(if (resume != null) resume.thread else thread)
         // Grok's start_job answers at once: a job's result has to be read from its chat for the call to hear it (#599).
         jobs.liveCallReadsReplies = mode == LiveVoiceMode.GROK_LIVE
         beginRecording(mode)
         hub.audioRoute.begin()
+        // A headset's media button mutes and unmutes the call (#331).
+        headsetMute.claim { setMicrophoneMuted(mode, !isMicrophoneMuted(mode)) }
         VoiceConversationService.start(context, mode.displayName)
         scope.launch {
             when (mode) {
@@ -465,8 +488,24 @@ class LiveVoiceCalls(private val context: Context, private val hub: VoiceHub) {
             _mode.value = null
             _minimised.value = false
         }
+        headsetMute.release()
         hub.audioRoute.end()
         VoiceConversationService.stop(context)
+    }
+
+    private fun isMicrophoneMuted(mode: LiveVoiceMode): Boolean = when (mode) {
+        LiveVoiceMode.GEMINI_LIVE -> geminiCreated && gemini.isMicrophoneMuted
+        LiveVoiceMode.GROK_LIVE -> grokCreated && grok.isMicrophoneMuted
+        LiveVoiceMode.GPT_LIVE -> gptCreated && gpt.isMicrophoneMuted
+    }
+
+    private fun setMicrophoneMuted(mode: LiveVoiceMode, muted: Boolean) {
+        if (!isActive(mode)) return
+        when (mode) {
+            LiveVoiceMode.GEMINI_LIVE -> gemini.setMicrophoneMuted(muted)
+            LiveVoiceMode.GROK_LIVE -> grok.setMicrophoneMuted(muted)
+            LiveVoiceMode.GPT_LIVE -> gpt.setMicrophoneMuted(muted)
+        }
     }
 
     /** The call screen was left while the call runs: it goes on minimised. A failed call closes. */
@@ -698,40 +737,70 @@ class LiveVoiceCalls(private val context: Context, private val hub: VoiceHub) {
     private var checkpointedTurns = 0
     private var checkpointedAt = 0L
     private val savingCalls = mutableSetOf<String>()
+    /** The chat the recorded call is attached to, linked to its row once saved. */
+    private var attachment: VoiceCallAttachment? = null
+
+    /** The last call attached to a chat, which a reconnect in the same chat goes on as (#556) instead of starting a second call. */
+    private class LastChatCall(val recorder: VoiceTranscriptRecorder, val chatId: String, val startedAtMs: Long, val endedAtMs: Long)
+    private var lastChatCall: LastChatCall? = null
+
+    /** A saved call the next live call continues (Resume Call), and the chat it goes back to. */
+    private class PendingResume(val sessionId: String, val context: VoiceResumeContext, val thread: VoiceThreadTarget?, val atMs: Long)
+    private var pendingResume: PendingResume? = null
+    /** What the live call now connecting continues, read by its session builders (reconnects included) until the call closes. */
+    private var resumeContext: VoiceResumeContext? = null
 
     private fun dashboardKey() = hermes.connection.value?.id ?: "-"
 
-    /** Starts saving the live call that is about to connect. */
+    /** Starts saving the live call that is about to connect. A pending Resume Call makes it continue that row. */
     private fun beginRecording(mode: LiveVoiceMode) {
         finishRecording()
         // The call screen shows the jobs this call starts, saved or not.
         jobs.beginLiveCall(asksBeforeSending = style().asksBeforeSending)
+        val now = System.currentTimeMillis()
+        val resume = pendingResume?.takeIf { now - it.atMs <= PENDING_RESUME_MS }
+        pendingResume = null
+        resumeContext = resume?.context
         liveHermesCall = pendingHermesCall
         pendingHermesCall = null
         // Nothing Hermes calls about rings over this call; read now, so "call me when it's done" knows whether Hermes can.
         hermesCalls.beginPresence()
         scope.launch { hermesCalls.refreshStatus() }
-        if (prefs().saveVoiceCalls == false) return
+        if (prefs().saveVoiceCalls == false) {
+            lastChatCall = null
+            return
+        }
         checkpointedTurns = 0
         checkpointedAt = 0L
         val profile = hermes.profile.value
         val client = VoiceHistoryClient(HermesVoiceRequester(hermes, profile))
         val thread = jobs.liveThread
+        // A call attached to a chat is kept with it, not as a row of its own (#556).
+        val chatId = if (resume == null) thread?.let { voiceCallChatId(it, profile) } else null
+        val previous = lastChatCall?.takeIf {
+            VoiceCallChatLinks.continuesChatCall(it.chatId, it.recorder.profile, it.endedAtMs, chatId, profile, now)
+        }
+        lastChatCall = null
         val recorder = VoiceTranscriptRecorder(
             engine = mode.storageID,
             profile = profile,
+            resumingSessionId = resume?.sessionId,
+            continuing = previous?.recorder,
             // Nothing reaches the host while a live call runs: a closing save that meets a newer call leaves its turns to the outbox.
             save = { request ->
                 if (isCallActive) throw VoiceHistoryClient.HistoryException.Busy()
                 client.save(request)
             },
-            title = { fallbackCallTitle() },
+            title = { turns -> if (isCallActive) fallbackCallTitle() else callTitle(turns, profile) },
         )
         // The engine still shows its last call's lines until this call starts: they aren't this call's.
         recorder.ignore(controllerTranscript(mode))
-        // A call attached to a chat is kept with it (#556); a Bot Chat lives in the bot's profile: its calls keep rows.
-        if (thread != null && thread.profile == null) recorder.chatId = thread.storedSessionId
+        if (previous == null) recorder.chatId = chatId
+        if (resume != null || previous != null) recorder.note(L10n.tr("Voice call resumed"))
+        // A reconnect picks up where the call left off; a Hermes call opens with its own news instead.
+        if (previous != null && liveHermesCall == null) resumeContext = VoiceResumeContext.continuing(previous.recorder.turns)
         this.recorder = recorder
+        attachment = thread?.let { VoiceCallAttachment(it, recorder.callId, previous?.startedAtMs ?: now, resumed = resume != null) }
         val transcript: StateFlow<List<LiveTranscriptEntry>> = when (mode) {
             LiveVoiceMode.GEMINI_LIVE -> gemini.transcriptFlow
             LiveVoiceMode.GROK_LIVE -> grok.transcriptFlow
@@ -766,13 +835,15 @@ class LiveVoiceCalls(private val context: Context, private val hub: VoiceHub) {
         checkpointedTurns = recorder.turns.size
         checkpointedAt = System.currentTimeMillis()
         val request = recorder.outboxRequest ?: return
-        queue(request, recorder.profile, recorder.jobSessionIds.toList())
+        // If the app dies before the call closes, its chat card measures the call to this checkpoint rather than to the later retry.
+        queue(request, recorder.profile, recorder.jobSessionIds.toList(), attachment?.copy(endedAtMs = checkpointedAt))
         savingCalls += request.callId
     }
 
-    private fun queue(request: VoiceTranscriptSaveRequest, profile: String, jobIds: List<String>) {
+    private fun queue(request: VoiceTranscriptSaveRequest, profile: String, jobIds: List<String>, attachment: VoiceCallAttachment?, dashboard: String = dashboardKey()) {
+        // A retry that creates the row can't wait on a title from Hermes.
         val titled = if (request.sessionId == null && request.title == null) request.copy(title = fallbackCallTitle()) else request
-        hub.queueVoiceTranscript(VoiceTranscriptOutbox.Entry(dashboardKey(), profile, titled, System.currentTimeMillis(), jobIds))
+        hub.queueVoiceTranscript(VoiceTranscriptOutbox.Entry(dashboard, profile, titled, System.currentTimeMillis(), jobIds, attachment?.toJson()))
     }
 
     /** A line the saved call gets (a started job, a turn sent to the chat). */
@@ -792,36 +863,357 @@ class LiveVoiceCalls(private val context: Context, private val hub: VoiceHub) {
         return true
     }
 
-    /** The call closed (its controller already stopped, so every turn is settled): save the rest, keep what can't be saved for later. */
+    /**
+     * The call closed (its controller already stopped, so every turn is
+     * settled): save the rest, keep what can't be saved for later, card the
+     * call in its chat, and prepare the summary a resume would need.
+     */
     private fun finishRecording() {
         recorderJob?.cancel()
         recorderJob = null
+        resumeContext = null
+        val attachment = attachment?.copy(endedAtMs = System.currentTimeMillis())
+        this.attachment = null
         val recorder = recorder ?: return
         capture()
+        // A chat new at the call's start may only have its stored id now.
+        if (recorder.chatId == null && !recorder.savedWithChat && recorder.sessionId == null && attachment != null && !attachment.resumed) {
+            recorder.chatId = voiceCallChatId(attachment.thread, recorder.profile)
+        }
+        val keptWith = recorder.chatId
+        if (keptWith != null && attachment != null) {
+            lastChatCall = LastChatCall(recorder, keptWith, attachment.startedAtMs, attachment.endedAtMs ?: System.currentTimeMillis())
+        }
         this.recorder = null
         val dashboard = dashboardKey()
         val queued = recorder.outboxRequest
         // Queued before the final save starts, so the turns survive the app being closed mid-save; the save then settles it.
         if (queued != null) {
-            queue(queued, recorder.profile, recorder.jobSessionIds.toList())
+            queue(queued, recorder.profile, recorder.jobSessionIds.toList(), attachment, dashboard)
             savingCalls += queued.callId
         }
+        // The id before the save; a chat that's gone gives the call a new one.
         val callId = recorder.callId
         scope.launch {
             recorder.flush()
+            // A reconnect went on as this call: its recorder saves, queues and links all of it.
+            if (recorder.handedOver) return@launch
             for (id in setOfNotNull(callId, queued?.callId)) {
                 savingCalls -= id
                 hub.dequeueVoiceTranscript(id)
             }
             val requeued = recorder.outboxRequest
-            if (requeued != null) {
-                hub.queueVoiceTranscript(VoiceTranscriptOutbox.Entry(dashboard, recorder.profile, requeued, System.currentTimeMillis(), recorder.jobSessionIds.toList()))
-            }
+            // A later retry creates the row and links the jobs and the chat's card then.
+            if (requeued != null) queue(requeued, recorder.profile, recorder.jobSessionIds.toList(), attachment, dashboard)
             val callRow = recorder.sessionId
+            // A call kept with its chat files its jobs under the chat.
             val chatId = if (recorder.savedWithChat) recorder.chatId else null
             if (callRow != null || chatId != null || requeued == null) {
                 // Filed under Voice Jobs even when the call saved no row.
-                hub.tagSessions(recorder.jobSessionIds.toList(), VoiceSessionTagKind.JOB, callRow ?: chatId, if (callRow != null) recorder.newRowTitle else null)
+                hub.tagSessions(
+                    recorder.jobSessionIds.toList(), VoiceSessionTagKind.JOB, callRow ?: chatId,
+                    if (callRow != null) recorder.newRowTitle else attachment?.thread?.title.takeIf { chatId != null },
+                )
+            }
+            if (chatId != null && attachment != null) {
+                linkCall(attachment, callSessionId = "", chatId = chatId, profile = recorder.profile)
+                return@launch
+            }
+            val sessionId = callRow ?: return@launch
+            if (attachment != null) linkCall(attachment, callSessionId = sessionId, chatId = null, profile = recorder.profile)
+            noteCallRow(sessionId, recorder.profile)
+            // The summary is a model turn on the host: not while a new call runs. Resume Call makes it then if it's still missing.
+            if (!isCallActive && recorder.profile == hermes.profile.value) resumeContextFor(sessionId, recorder.profile)
+        }
+    }
+
+    /** The chat's durable id: a chat new at the call's start may only have its stored id later. */
+    private fun storedChatId(thread: VoiceThreadTarget): String? {
+        thread.storedSessionId?.takeIf { it.isNotEmpty() }?.let { return it }
+        val runtime = thread.runtimeSessionId
+        val chat = chatHost?.chat
+        if (chat != null && chat.runtimeId == runtime) chat.sessionId?.takeIf { it.isNotEmpty() && it != runtime }?.let { return it }
+        return chatHost?.storedId(runtime)
+    }
+
+    /** The chat a call on `profile` is kept with (#556): its stored id, when the chat is on that profile. A Bot Chat lives in the bot's profile, so its calls keep rows of their own. */
+    private fun voiceCallChatId(thread: VoiceThreadTarget, profile: String): String? {
+        if (thread.profile != null && thread.profile != profile) return null
+        return storedChatId(thread)
+    }
+
+    /** A short title from the call's opening, like a chat's; the time-stamped fallback when Hermes can't make one. */
+    private suspend fun callTitle(turns: List<VoiceTranscriptTurn>, profile: String): String {
+        val opening = VoiceCallTitles.opening(turns)
+        if (opening.isEmpty()) return fallbackCallTitle()
+        val title = oneshot("title_generation", VoiceCallTitles.INSTRUCTIONS, opening, profile, VoiceCallTitles.MAX_TOKENS)
+        return VoiceCallTitles.cleaned(title) ?: fallbackCallTitle()
+    }
+
+    /** Hermes' one-shot model turn (`llm.oneshot`), which adds nothing to any conversation; null when it made nothing. */
+    private suspend fun oneshot(task: String, instructions: String, input: String, profile: String, maxTokens: Int): String? = try {
+        hermes.rpc(
+            "llm.oneshot",
+            buildJsonObject {
+                put("task", task)
+                put("instructions", instructions)
+                put("input", input)
+                put("max_tokens", maxTokens)
+                put("temperature", 0.3)
+                if (profile.isNotEmpty()) put("profile", profile)
+            },
+            app.hermesconduit.android.net.GatewayClient.timeoutFor("llm.oneshot"),
+        ).obj?.get("text").str?.trim()?.takeIf { it.isNotEmpty() }
+    } catch (e: CancellationException) {
+        throw e
+    } catch (_: Exception) {
+        null
+    }
+
+    // endregion
+
+    // region Calls in their chats
+
+    private val _chatLinks = MutableStateFlow(VoiceCallChatLinks.parse(hub.settings.getString(VoiceCallChatLinks.STORAGE_KEY, "").ifEmpty { null }))
+    /** The calls started from chats, for the chats' call cards. */
+    val chatLinks: StateFlow<VoiceCallChatLinks> = _chatLinks
+
+    /** A call attached to a chat was saved: the chat gets its card. `callSessionId` is empty for a call kept with its chat, `chatId` the chat it was kept with. */
+    internal fun linkCall(attachment: VoiceCallAttachment, callSessionId: String, chatId: String?, profile: String) {
+        val link = VoiceCallChatLink(
+            callId = attachment.callId,
+            callSessionId = callSessionId,
+            chatRuntimeSessionId = attachment.thread.runtimeSessionId,
+            chatStoredSessionId = chatId ?: storedChatId(attachment.thread),
+            chatTitle = attachment.thread.title,
+            profile = profile,
+            startedAtMs = attachment.startedAtMs,
+            endedAtMs = attachment.endedAtMs ?: System.currentTimeMillis(),
+            resumed = attachment.resumed,
+            chatProfile = attachment.thread.profile,
+        )
+        val links = _chatLinks.value.adding(link)
+        _chatLinks.value = links
+        hub.settings.set(VoiceCallChatLinks.STORAGE_KEY, if (links.links.isEmpty()) "" else links.toJson())
+    }
+
+    /** A queued call a retry just saved: its chat gets the card the closing save couldn't add. */
+    internal fun linkSavedCall(attachmentJson: kotlinx.serialization.json.JsonObject?, sessionId: String?, chatId: String?, profile: String) {
+        if (sessionId != null) noteCallRow(sessionId, profile)
+        val attachment = VoiceCallAttachment.parse(attachmentJson) ?: return
+        when {
+            sessionId != null -> linkCall(attachment, sessionId, null, profile)
+            chatId != null -> linkCall(attachment, "", chatId, profile)
+        }
+    }
+
+    fun callLink(markerId: String): VoiceCallChatLink? = _chatLinks.value.link(markerId)
+
+    private val _callRows = MutableStateFlow<Map<String, Set<String>>>(emptyMap())
+    /** Saved call rows (the host's `call` tags plus rows saved here), by profile, for Resume Call. */
+    val callRows: StateFlow<Map<String, Set<String>>> = _callRows
+    private val callRowsFetchedAt = mutableMapOf<String, Long>()
+
+    private fun noteCallRow(sessionId: String, profile: String) {
+        _callRows.value = _callRows.value + (profile to (_callRows.value[profile].orEmpty() + sessionId))
+    }
+
+    /** Reads the profile's call tags, at most every few seconds unless forced, and retries queued saves. An older plugin has no tags: nothing can be resumed then. */
+    fun refreshCallRows(force: Boolean = false) {
+        if (!hermes.isSignedIn) return
+        val profile = hermes.profile.value
+        val key = dashboardKey() + "/" + profile
+        val now = System.currentTimeMillis()
+        if (!force && now - (callRowsFetchedAt[key] ?: 0L) < CALL_ROWS_REFRESH_MS) return
+        callRowsFetchedAt[key] = now
+        scope.launch {
+            val tags = runCatching { VoiceHistoryClient(HermesVoiceRequester(hermes, profile)).tags() }.getOrNull()
+            if (tags != null) {
+                val calls = tags.filterValues { it.kind == VoiceSessionTagKind.CALL }.keys
+                _callRows.value = _callRows.value + (profile to (_callRows.value[profile].orEmpty() + calls))
+            }
+            // Saves a closed call couldn't finish are retried too; a save while a live call runs stalls it.
+            if (!isCallActive) hub.saveVoiceCallsNow()
+        }
+    }
+
+    /** The open chat's own ids: its stored and runtime ids, and the stored id the session list knows for its runtime. */
+    fun chatOwnIds(chat: ChatState): Set<String> =
+        listOfNotNull(chat.sessionId, chat.runtimeId, chat.runtimeId?.let { chatHost?.storedId(it) }).filter { it.isNotEmpty() }.toSet()
+
+    /** The open chat's id as a saved live call, when it is one. */
+    fun callRowId(chat: ChatState, rows: Map<String, Set<String>> = _callRows.value): String? {
+        if (chat.botProfile != null) return null
+        val calls = rows[hermes.profile.value].orEmpty()
+        return listOfNotNull(chat.sessionId, chat.runtimeId).firstOrNull { it in calls } ?: chatOwnIds(chat).firstOrNull { it in calls }
+    }
+
+    /** The chat's history with its call cards, each placed where its call started. */
+    fun messagesWithCallCards(chat: ChatState, links: VoiceCallChatLinks = _chatLinks.value, rows: Map<String, Set<String>> = _callRows.value): List<ChatMessage> {
+        if (links.links.isEmpty() || chat.messages.isEmpty()) return chat.messages
+        val own = chatOwnIds(chat)
+        val open = own + setOfNotNull(callRowId(chat, rows))
+        return links.merge(chat.messages, own, open, hermes.profile.value)
+    }
+
+    private val _chatCallTranscript = MutableStateFlow<VoiceChatCall?>(null)
+    /** The call kept with its chat whose transcript is open (#556). */
+    val chatCallTranscript: StateFlow<VoiceChatCall?> = _chatCallTranscript
+    /** The card tap whose fetch may still set the transcript. */
+    private var chatCallRequest = 0L
+    private val _callLinkError = MutableStateFlow<String?>(null)
+    /** Why the last call card couldn't open what it leads to. */
+    val callLinkError: StateFlow<String?> = _callLinkError
+
+    fun clearCallLinkError() {
+        _callLinkError.value = null
+    }
+
+    /** Closes a call transcript and outdates its fetch still in flight, so it can't come back over whatever opens next. */
+    fun dismissChatCallTranscript() {
+        chatCallRequest += 1
+        _chatCallTranscript.value = null
+    }
+
+    /**
+     * Opens the saved transcript behind a chat's call card. Looked up at tap
+     * time: an outbox retry can move the call to a new row after the card is
+     * drawn. A call kept with the chat is read from the host when tapped.
+     */
+    fun openCallTranscript(markerId: String) {
+        // Any later tap outdates a kept call's fetch still in flight.
+        chatCallRequest += 1
+        val link = callLink(markerId) ?: return
+        val unavailable = L10n.tr("That call's transcript is no longer available.")
+        if (!link.storedWithChat) {
+            val host = chatHost
+            if (host == null) _callLinkError.value = unavailable else host.openSession(link.callSessionId, L10n.tr("Voice call"))
+            return
+        }
+        val chatId = link.chatStoredSessionId?.takeIf { it.isNotEmpty() }
+        if (chatId == null) {
+            _callLinkError.value = unavailable
+            return
+        }
+        // Only the latest tap answers, whichever fetch lands last.
+        val request = chatCallRequest
+        scope.launch {
+            val calls = try {
+                VoiceHistoryClient(HermesVoiceRequester(hermes, link.profile)).chatCalls(chatId, link.callId)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: VoiceHistoryClient.HistoryException) {
+                if (chatCallRequest != request) return@launch
+                _callLinkError.value = when (e) {
+                    is VoiceHistoryClient.HistoryException.PluginMissing,
+                    is VoiceHistoryClient.HistoryException.RowUnavailable,
+                    is VoiceHistoryClient.HistoryException.Unsupported -> unavailable
+                    // Busy or a garbled answer: worth another tap shortly.
+                    else -> L10n.tr("Could not load %s: %s", L10n.tr("Voice call"), L10n.tr("Hermes is busy right now. Wait a moment, then try again."))
+                }
+                return@launch
+            } catch (e: Exception) {
+                if (chatCallRequest != request) return@launch
+                // Offline or a host hiccup: the transcript may well be there.
+                _callLinkError.value = L10n.tr("Could not load %s: %s", L10n.tr("Voice call"), app.hermesconduit.android.core.live.liveErrorMessage(e))
+                return@launch
+            }
+            if (chatCallRequest != request) return@launch
+            val call = calls.firstOrNull { it.callId == link.callId }?.takeIf { it.turns.isNotEmpty() }
+            if (call == null) _callLinkError.value = unavailable else _chatCallTranscript.value = call
+        }
+    }
+
+    /** Opens the chat a call was started from, from the card in the call's own transcript. */
+    fun openCallChat(markerId: String) {
+        val link = callLink(markerId)
+        val host = chatHost
+        val bot = link?.chatProfile?.takeIf { it.isNotEmpty() }
+        val chatId = link?.chatSessionId
+        when {
+            host != null && bot != null -> host.openBotChat(bot)
+            host != null && chatId != null -> host.openSession(chatId, link.chatTitle)
+            else -> _callLinkError.value = L10n.tr("That chat is no longer available.")
+        }
+    }
+
+    // endregion
+
+    // region Resume Call
+
+    private val _preparingResume = MutableStateFlow(false)
+    val preparingResume: StateFlow<Boolean> = _preparingResume
+
+    /** Whether Resume Call has a live voice mode to resume with. With saving off, a resumed call couldn't add to the row. */
+    fun canResume(): Boolean = hermes.isSignedIn && prefs().saveVoiceCalls != false && enabledMode() != null && !isCallActive
+
+    /**
+     * Continues a saved call with a new live call on the profile's live mode.
+     * It is seeded with the row (a summary when it's long) and appends to the
+     * same row. True when the call screen should open.
+     */
+    suspend fun resumeCall(sessionId: String): Boolean {
+        if (!canResume() || _preparingResume.value) return false
+        _preparingResume.value = true
+        try {
+            val profile = hermes.profile.value
+            val context = resumeContextFor(sessionId, profile)
+            if (profile != hermes.profile.value || !canResume()) return false
+            val mode = enabledMode() ?: return false
+            // A call started from a chat goes back to that chat.
+            val thread = _chatLinks.value.latest(sessionId, profile)?.thread
+            // Without the saved turns the call still continues the row.
+            pendingResume = PendingResume(sessionId, context ?: VoiceResumeContext(null, emptyList()), thread, System.currentTimeMillis())
+            if (hasMicrophonePermission()) {
+                open(mode, thread)
+                // Starting the call took it; a call already running didn't, and a later unrelated call must not.
+                pendingResume = null
+            }
+            return true
+        } finally {
+            _preparingResume.value = false
+        }
+    }
+
+    /**
+     * What a resumed call gets from the row. A long row's older turns are
+     * summarized once and the summary kept on the host; null when the row
+     * can't be read.
+     */
+    private suspend fun resumeContextFor(sessionId: String, profile: String): VoiceResumeContext? {
+        val page = try {
+            hermes.rest { it.messages(sessionId, profile, 0, RESUME_READ_LIMIT) }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            return null
+        }
+        val complete = !page.hasMore
+        val turns = VoiceResumePlan.turns(page.messages)
+        val client = VoiceHistoryClient(HermesVoiceRequester(hermes, profile))
+        // A failed read isn't "no summary": a summary made now mustn't overwrite one that may be valid.
+        var summaryReadFailed = false
+        val stored = try {
+            client.summary(sessionId)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            summaryReadFailed = true
+            null
+        }
+        // A stored summary counts turns from the row's start: a partial read can't be checked against it, so it is used as is and never replaced.
+        return when (val plan = VoiceResumePlan.plan(turns, if (complete) stored else null)) {
+            // A partial read's turns never reach the row's opening.
+            is VoiceResumePlan.Verbatim -> VoiceResumeContext(if (complete) null else stored?.text, plan.turns)
+            is VoiceResumePlan.Summarized -> VoiceResumeContext(plan.summary, plan.recent)
+            is VoiceResumePlan.NeedsSummary -> {
+                // The row's opening wasn't read: a summary of this window would pass a middle stretch off as the earlier conversation.
+                if (!complete) return VoiceResumeContext(stored?.text, plan.recent)
+                // The latest turns alone still carry the thread.
+                val text = oneshot("compression", VoiceResumePlan.SUMMARY_INSTRUCTIONS, VoiceResumePlan.summaryInput(plan.older), profile, 600)
+                    ?: return VoiceResumeContext(null, plan.recent)
+                if (!summaryReadFailed) runCatching { client.storeSummary(VoiceResumeSummary(text, plan.covers), sessionId) }
+                VoiceResumeContext(text, plan.recent)
             }
         }
     }
@@ -838,6 +1230,11 @@ class LiveVoiceCalls(private val context: Context, private val hub: VoiceHub) {
         const val VERBATIM_CHARACTER_LIMIT = 6_000
         const val RECENT_TURN_COUNT = 10
         const val TURN_CHARACTER_LIMIT = 1_200
+        /** A Resume Call waiting on the microphone permission still applies this long after it was asked for. */
+        const val PENDING_RESUME_MS = 60_000L
+        const val CALL_ROWS_REFRESH_MS = 15_000L
+        /** The newest messages a resumed row is read with; older ones are covered by the summary. */
+        const val RESUME_READ_LIMIT = 200
 
         fun fallbackCallTitle(atMs: Long = System.currentTimeMillis()): String =
             L10n.tr("Voice call · %s", DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(Date(atMs)))

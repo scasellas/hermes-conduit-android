@@ -189,7 +189,7 @@ fun PluginScreen(onBack: () -> Unit, @Suppress("UNUSED_PARAMETER") navigate: (St
 }
 
 @Composable
-private fun SetupCommand(step: Int, title: String, command: String) {
+internal fun SetupCommand(step: Int, title: String, command: String) {
     val clipboard = LocalClipboardManager.current
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text("$step. $title", style = MaterialTheme.typography.bodyMedium)

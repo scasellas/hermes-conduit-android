@@ -174,6 +174,7 @@ fun Composer(chat: ChatState, enabled: Boolean, actions: ChatActions, slashComma
                     )
                 }
             }
+            app.hermesconduit.android.ui.voice.live.ResumeVoiceCallButton(chat, enabled)
             val submit = {
                 if (attachments.isEmpty() && actions.runSlash(text)) {
                     text = ""
