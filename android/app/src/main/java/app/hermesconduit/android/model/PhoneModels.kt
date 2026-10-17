@@ -367,7 +367,10 @@ data class PhoneFocusSnapshot(val active: Boolean, val label: String?, val holdC
 
 object PhoneSyncLimits {
     const val MAX_EVENTS = 4_000
+    const val MAX_REMINDERS = 1_000
     const val NOTES_CHARS = 2_000
+    /** Completed reminders stay shared this long. */
+    const val COMPLETED_REMINDER_DAYS = 14L
     /** Everything goes whole again at least this often. */
     const val FULL_SYNC_INTERVAL_MS = 24L * 3600 * 1000
     /** Status goes again after this long even when nothing changed. */

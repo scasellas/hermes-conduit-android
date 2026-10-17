@@ -16,6 +16,7 @@ import androidx.compose.material.icons.filled.Alarm
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.BatteryStd
 import androidx.compose.material.icons.filled.CalendarMonth
+import androidx.compose.material.icons.filled.Checklist
 import androidx.compose.material.icons.filled.DoNotDisturbOn
 import androidx.compose.material.icons.filled.EventBusy
 import androidx.compose.material.icons.filled.Lock
@@ -111,6 +112,8 @@ fun PhoneSettingsScreen(onBack: () -> Unit) {
     var askingMode by remember { mutableStateOf<LiveVoiceMode?>(null) }
     var voiceUses by remember { mutableStateOf(DeviceSharing.voiceReads(context, VoiceReadLog.PHONE_KEY)) }
     var calendarsOpen by remember { mutableStateOf(false) }
+    val tasks = remember { (engine.calendarSource as? CalendarContractSource)?.tasks ?: TaskProviderReminders(context) }
+    val taskApps = remember(state.lastSync, working) { tasks.installed }
     val showsAlarms = (engine.alarmSource.isSupported || choices.alarms) && (plugin.reports(PhoneSync.ALARMS_CAPABILITY) || choices.alarms)
     val showsPeople = plugin.reports(PhoneSync.CONTACTS_CAPABILITY) || choices.contacts
 
@@ -136,9 +139,9 @@ fun PhoneSettingsScreen(onBack: () -> Unit) {
     }
     fun withCalendarAccess(next: PhoneSyncPreferences, then: () -> Unit) {
         val wanted = when (next.calendarAccess) {
-            PhoneCalendarAccess.FULL -> arrayOf(Manifest.permission.READ_CALENDAR, Manifest.permission.WRITE_CALENDAR)
-            PhoneCalendarAccess.WRITE_ONLY -> arrayOf(Manifest.permission.WRITE_CALENDAR)
-            PhoneCalendarAccess.OFF -> emptyArray()
+            PhoneCalendarAccess.FULL -> listOf(Manifest.permission.READ_CALENDAR, Manifest.permission.WRITE_CALENDAR)
+            PhoneCalendarAccess.WRITE_ONLY -> listOf(Manifest.permission.WRITE_CALENDAR)
+            PhoneCalendarAccess.OFF -> emptyList()
         }
         val access = engine.calendarSource.eventAccess
         val missing = when (next.calendarAccess) {
@@ -146,18 +149,28 @@ fun PhoneSettingsScreen(onBack: () -> Unit) {
             PhoneCalendarAccess.WRITE_ONLY -> access == PhoneCalendarAccess.OFF
             PhoneCalendarAccess.OFF -> false
         }
-        if (!missing || wanted.isEmpty()) {
+        // A tasks app's reminders need its own permissions, asked alongside.
+        val tasksWanted = if (next.reminders && !engine.calendarSource.remindersAuthorized) tasks.missingPermissions else emptyList()
+        val asking = (if (missing) wanted else emptyList()) + tasksWanted
+        if (asking.isEmpty()) {
             then()
             return
         }
         afterPermission = {
             val now = engine.calendarSource.eventAccess
-            if (now == PhoneCalendarAccess.OFF && next.calendarAccess != PhoneCalendarAccess.OFF) {
-                error = L10n.tr("Conduit doesn't have access to your calendar. Allow it in the Settings app.")
-                working = false
-            } else then()
+            when {
+                now == PhoneCalendarAccess.OFF && next.calendarAccess != PhoneCalendarAccess.OFF -> {
+                    error = L10n.tr("Conduit doesn't have access to your calendar. Allow it in the Settings app.")
+                    working = false
+                }
+                next.reminders && !engine.calendarSource.remindersAuthorized -> {
+                    error = L10n.tr("Conduit doesn't have access to your calendar or reminders. Allow it in the Settings app.")
+                    working = false
+                }
+                else -> then()
+            }
         }
-        calendarPermission.launch(wanted)
+        calendarPermission.launch(asking.toTypedArray())
     }
 
     val contactPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickContact()) { uri ->
@@ -197,18 +210,31 @@ fun PhoneSettingsScreen(onBack: () -> Unit) {
                     )
                     if (choices.calendarAccess == PhoneCalendarAccess.FULL) {
                         ChoiceRow(t("Share"), choices.calendarWindow, PhoneCalendarWindow.entries.map { it to t(it.title) }, { apply(choices.copy(window = it.days)) })
+                    }
+                    if (taskApps.isNotEmpty() || choices.reminders) {
+                        SettingsToggle(t("Reminders"), choices.reminders, { on ->
+                            val next = choices.copy(reminders = on)
+                            if (preferences.isOn && on) withCalendarAccess(next) { apply(next) } else apply(next)
+                        }, icon = Icons.Default.Checklist)
+                    }
+                    if (taskApps.isNotEmpty()) {
+                        Caption(t("Reminders come from %s.", taskApps.joinToString(", ") { it.title }))
+                    } else {
+                        Caption(t("Android has no system reminders app. To share reminders, install a tasks app that other apps can use, such as OpenTasks or Tasks.org."))
+                    }
+                    if (choices.calendarAccess == PhoneCalendarAccess.FULL || choices.reminders) {
                         SettingsToggle(t("Include notes and attendees"), choices.details, { apply(choices.copy(details = it)) })
-                        if (choices.details) {
+                        if (choices.details && choices.calendarAccess == PhoneCalendarAccess.FULL) {
                             Column(Modifier.padding(start = 28.dp)) {
                                 SettingsToggle(t("Include attendees' email addresses"), choices.attendeeEmails, { apply(choices.copy(attendeeEmails = it)) })
                             }
                         }
                         Caption(t("Without these, Hermes gets titles, times, places and lists, not what's written in notes or who's invited."))
                     }
-                    Caption(t("Android has no system reminders app, so reminders aren't shared from this phone."))
-                    if (preferences.isOn && choices.calendarAccess == PhoneCalendarAccess.FULL) {
+                    if (preferences.isOn && (choices.calendarAccess == PhoneCalendarAccess.FULL || choices.reminders)) {
                         val calendars = remember(preferences, state.lastSync) {
-                            engine.calendarSource.calendars(engine.calendarSource.eventAccess == PhoneCalendarAccess.FULL, false)
+                            engine.calendarSource.calendars(engine.calendarSource.eventAccess == PhoneCalendarAccess.FULL && choices.calendarAccess == PhoneCalendarAccess.FULL,
+                                choices.reminders && engine.calendarSource.remindersAuthorized)
                                 .mapNotNull { entry -> entry["id"].str?.let { id -> Triple(id, entry["title"].str.orEmpty(), engine.calendarSource.platformCalendarID(id)) } }
                         }
                         if (calendars.isNotEmpty()) {
@@ -228,6 +254,9 @@ fun PhoneSettingsScreen(onBack: () -> Unit) {
                 SettingsSection(t("Focus and phone status")) {
                     SettingsToggle(t("Do Not Disturb"), choices.focus, { apply(choices.copy(focus = it)) }, icon = Icons.Default.DoNotDisturbOn)
                     Caption(t("Hermes hears whether Do Not Disturb is on, so it can hold calls and messages while it is."))
+                    FocusFiltersSection(changed = {
+                        if (engine.preferences.value.isOn && engine.preferences.value.focus) scope.launch { sync.run(PhoneSyncReason.FOCUS_CHANGED) }
+                    })
                     SettingsToggle(t("Phone status"), choices.status, { apply(choices.copy(status = it)) }, icon = Icons.Default.BatteryStd)
                     Caption(t("Battery and charging, whether Android Auto or headphones are connected, and Wi-Fi or cellular. Only the latest state is kept."))
                 }

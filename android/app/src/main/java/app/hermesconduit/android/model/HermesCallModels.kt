@@ -693,10 +693,15 @@ sealed interface HermesNativeCallPlan {
         /** A call this much older than when it was placed rings no more. */
         const val LATE_AFTER_MS = 90_000L
 
-        fun plan(sentAtMs: Long?, nowMs: Long, voiceInUse: Boolean, replayed: Boolean, ringingWanted: Boolean): HermesNativeCallPlan {
+        /**
+         * [held]: a "Tell Hermes" filter that's on holds calls (iOS's Focus
+         * filter, which the host honours). The call doesn't ring; its news
+         * waits in "Hermes wants to talk", and it isn't a missed call.
+         */
+        fun plan(sentAtMs: Long?, nowMs: Long, voiceInUse: Boolean, replayed: Boolean, ringingWanted: Boolean, held: Boolean = false): HermesNativeCallPlan {
             if (replayed) return EndAtOnce(Notice.NONE)
             if (sentAtMs != null && nowMs - sentAtMs > LATE_AFTER_MS) return EndAtOnce(Notice.MISSED)
-            if (voiceInUse || !ringingWanted) return EndAtOnce(Notice.TALK)
+            if (held || voiceInUse || !ringingWanted) return EndAtOnce(Notice.TALK)
             return Ring
         }
 

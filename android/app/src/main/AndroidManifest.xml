@@ -22,6 +22,13 @@
     <uses-permission android:name="android.permission.READ_CALENDAR" />
     <uses-permission android:name="android.permission.WRITE_CALENDAR" />
     <uses-permission android:name="com.android.alarm.permission.SET_ALARM" />
+    <!-- Reminders, from tasks apps with the OpenTasks provider. -->
+    <uses-permission android:name="org.dmfs.permission.READ_TASKS" />
+    <uses-permission android:name="org.dmfs.permission.WRITE_TASKS" />
+    <uses-permission android:name="org.tasks.permission.READ_TASKS" />
+    <uses-permission android:name="org.tasks.permission.WRITE_TASKS" />
+    <!-- Do Not Disturb & Modes: adding Conduit's own mode (Android 15). -->
+    <uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY" />
 
     <!-- Settings > Location -->
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
@@ -51,6 +58,9 @@
 
     <queries>
         <package android:name="com.google.android.apps.healthdata" />
+        <!-- Tasks apps whose reminders Conduit can share. -->
+        <provider android:authorities="org.dmfs.tasks" />
+        <provider android:authorities="org.tasks.opentasks" />
         <intent>
             <action android:name="android.speech.RecognitionService" />
         </intent>

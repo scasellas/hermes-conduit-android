@@ -1,11 +1,16 @@
 package app.hermesconduit.android.ui.phone
 
+import android.app.NotificationManager
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.database.ContentObserver
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.provider.CalendarContract
+import androidx.core.content.ContextCompat
 import app.hermesconduit.android.appSettings
 import app.hermesconduit.android.data.DeviceKeyStore
 import app.hermesconduit.android.data.FileTextStore
@@ -33,7 +38,7 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import java.time.Instant
 
-enum class PhoneSyncReason { CONNECTED, FOREGROUND, MESSAGE_SENT, CALENDAR_CHANGED, BACKGROUND_REFRESH, ANSWERED, MANUAL, TURNED_ON, VOICE_CALL }
+enum class PhoneSyncReason { CONNECTED, FOREGROUND, MESSAGE_SENT, CALENDAR_CHANGED, BACKGROUND_REFRESH, ANSWERED, MANUAL, TURNED_ON, VOICE_CALL, FOCUS_CHANGED }
 
 /**
  * When the calendar and phone status sync, and with which connection (iOS
@@ -88,6 +93,8 @@ class PhoneSync private constructor(private val context: Context) {
         finishDeletionLeftOnHost()?.let { error -> if (owed(dashboardID) != null) throw error }
         var choices = requested
         if (choices.alarms && !engine.alarmSource.authorized) choices = choices.withAlarms(false)
+        // Without a tasks app Conduit may use, reminders stay off, as on a phone without any.
+        if (choices.reminders && !engine.calendarSource.remindersAuthorized) choices = choices.copy(reminders = false)
         engine.savePreferences(
             choices.copy(
                 voiceReaders = null,
@@ -141,7 +148,7 @@ class PhoneSync private constructor(private val context: Context) {
         }
     }
 
-    /** The calendar changing while Conduit runs. */
+    /** The calendar, a tasks app's reminders or Do Not Disturb changing while Conduit runs (iOS's change observer and Focus filters). */
     fun startObservers() {
         if (observer != null || !engine.preferences.value.isOn) return
         val handler = Handler(Looper.getMainLooper())
@@ -157,6 +164,18 @@ class PhoneSync private constructor(private val context: Context) {
         }
         runCatching { context.contentResolver.registerContentObserver(CalendarContract.Events.CONTENT_URI, true, created) }
             .onSuccess { observer = created }
+        val tasks = (engine.calendarSource as? CalendarContractSource)?.tasks
+        tasks?.installed?.forEach { app -> runCatching { context.contentResolver.registerContentObserver(tasks.tasksUri(app), true, created) } }
+        // Sent only to receivers registered while the app runs.
+        val modes = object : BroadcastReceiver() {
+            override fun onReceive(context: Context, intent: Intent) {
+                if (!engine.preferences.value.focus) return
+                context.hermes.scope.launch { run(PhoneSyncReason.FOCUS_CHANGED) }
+            }
+        }
+        runCatching {
+            ContextCompat.registerReceiver(context, modes, IntentFilter(NotificationManager.ACTION_INTERRUPTION_FILTER_CHANGED), ContextCompat.RECEIVER_NOT_EXPORTED)
+        }
     }
 
     // region Deletions owed

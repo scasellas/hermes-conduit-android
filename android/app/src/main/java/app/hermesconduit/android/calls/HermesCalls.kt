@@ -25,6 +25,7 @@ import app.hermesconduit.android.model.bool
 import app.hermesconduit.android.model.obj
 import app.hermesconduit.android.model.str
 import app.hermesconduit.android.net.DashboardHttpException
+import app.hermesconduit.android.ui.phone.PhoneModes
 import app.hermesconduit.android.ui.plugin.PluginStatusRepository
 import app.hermesconduit.android.ui.voice.VoiceHub
 import app.hermesconduit.android.ui.voice.VoiceLaunch
@@ -183,8 +184,10 @@ class HermesCalls private constructor(private val context: Context) {
         val now = System.currentTimeMillis()
         // A watch call this phone serves is voice in use too.
         val busy = isVoiceInUse || ringing != null || WatchDirectBroker.get(context).hasCall
-        val plan = HermesNativeCallPlan.plan(target.sentAtMs, now, busy, replayed = false, ringingWanted = ringingWanted && HermesCallNotifications.canRing(context))
-        if (ringing == null) HermesCallTrace.begin("Call received from $source: ${plan.traceLabel} (voice busy: $busy)")
+        // The host holds the calls it places while a shared filter says so; calls this phone places itself never reach it.
+        val held = PhoneModes.holdsCalls(context)
+        val plan = HermesNativeCallPlan.plan(target.sentAtMs, now, busy, replayed = false, ringingWanted = ringingWanted && HermesCallNotifications.canRing(context), held = held)
+        if (ringing == null) HermesCallTrace.begin("Call received from $source: ${plan.traceLabel} (voice busy: $busy, held: $held)")
         val name = callerName(target)
         when (plan) {
             HermesNativeCallPlan.Ring -> {
