@@ -2,6 +2,7 @@ package app.hermesconduit.android.ui.nav
 
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Archive
+import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Extension
 import androidx.compose.material.icons.filled.FolderOpen
@@ -65,7 +66,8 @@ val features: List<Feature> = listOf(
     Feature("settings.watch", "Watch", Icons.Default.Watch, inDrawer = false, section = "On this device") { back, _ -> app.hermesconduit.android.watch.WatchSettingsPage(back) },
     Feature("settings.connectionlog", "Connection log", Icons.Default.Info, inDrawer = false, section = "Server") { back, _ -> app.hermesconduit.android.ui.settings.ConnectionLogPage(back) },
     Feature("settings.screenquestion", "Ask Hermes About Screen", Icons.Default.Info, inDrawer = false, section = "App") { back, _ -> app.hermesconduit.android.assist.ScreenQuestionPage(back) },
-    Feature("settings.about", "About & privacy", Icons.Default.Info, inDrawer = false, section = "About") { back, _ -> app.hermesconduit.android.ui.settings.AboutPage(back) },
+    Feature("settings.automation", "Automation", Icons.Default.Bolt, inDrawer = false, section = "App") { back, _ -> app.hermesconduit.android.ui.shortcut.AutomationSettingsPage(back) },
+    Feature("settings.about","About & privacy", Icons.Default.Info, inDrawer = false, section = "About") { back, _ -> app.hermesconduit.android.ui.settings.AboutPage(back) },
     Feature("capabilities", "Capabilities", Icons.Default.Extension, inDrawer = true) { back, _ -> CapabilitiesScreen(back) },
     Feature("cron", "Cron", Icons.Default.Schedule) { back, nav -> app.hermesconduit.android.ui.cron.CronScreen(back, nav) },
     Feature("settings.gateway", "Gateway", Icons.Default.Router, inDrawer = false) { back, nav -> app.hermesconduit.android.ui.gateway.GatewayScreen(back, nav) },

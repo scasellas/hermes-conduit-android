@@ -109,6 +109,27 @@
                 <data android:mimeType="text/plain" />
             </intent-filter>
         </activity>
+        <!-- Automation (Tasker, MacroDroid, Automate): Send to Hermes, like the iOS Shortcuts action. Off until allowed in Settings > Automation. -->
+        <activity
+            android:name=".ui.shortcut.SendToHermesActivity"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|keyboard|uiMode|density|locale|layoutDirection"
+            android:excludeFromRecents="true"
+            android:exported="true"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
+            <intent-filter>
+                <action android:name="app.hermesconduit.android.action.SEND_TO_HERMES" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+        <receiver
+            android:name=".ui.shortcut.SendToHermesReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="app.hermesconduit.android.action.SEND_TO_HERMES" />
+            </intent-filter>
+        </receiver>
         <service
             android:name=".ui.AskHermesTileService"
             android:exported="true"
