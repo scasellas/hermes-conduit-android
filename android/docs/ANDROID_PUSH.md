@@ -1,5 +1,7 @@
 # Android push through UnifiedPush: what the notifier plugin adds
 
+> **Implementation:** the plugin side is on the `android-unifiedpush` branch of the fork [`scasellas/hermes-conduit-notifier-android`](https://github.com/scasellas/hermes-conduit-notifier-android).
+
 Status: the Android client is done (Conduit for Android, `push/`, `model/PushE2E.kt`). This document is the server half: everything the Hermes notifier plugin (`conduit_push`) must add so it can wake an Android phone while Conduit is closed. It is meant to be implementable from this document alone.
 
 On iOS the plugin sends pushes through the push relay (`push.milim.dev`), which only talks to APNs. Android does not use the relay at all. Instead the phone registers a [UnifiedPush](https://unifiedpush.org) endpoint (an HTTPS URL on ntfy, NextPush, Sunup, a self-hosted server and so on) with the plugin, and the plugin POSTs sealed messages straight to that URL.
