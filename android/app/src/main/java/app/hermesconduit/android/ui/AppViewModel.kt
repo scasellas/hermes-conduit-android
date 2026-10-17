@@ -189,6 +189,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application), Ch
         if (ProfileSwitching.handler === switchProfile) ProfileSwitching.handler = null
         super.onCleared()
     }
+    // Before init: a signed-in launch restores the last chat from settings while constructing.
+    private val settings = application.appSettings
 
     init {
         ProfileSwitching.handler = switchProfile
@@ -611,7 +613,6 @@ class AppViewModel(application: Application) : AndroidViewModel(application), Ch
         _chat.value = ChatState(model = _chat.value.model, provider = _chat.value.provider)
     }
 
-    private val settings = application.appSettings
 
     private val _openRoute = MutableStateFlow<String?>(null)
     /** A route a link asked to open (consumed by the navigation host). */

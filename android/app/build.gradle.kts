@@ -52,6 +52,8 @@ android {
     // The phone ↔ watch wire and the live voice protocols and sessions, shared with :wear.
     sourceSets["main"].java.srcDir("../wearwire/src/main/kotlin")
     sourceSets["main"].java.srcDir("../livewire/src/main/kotlin")
+    // Robolectric integration tests read the merged manifest, resources and assets.
+    testOptions { unitTests.isIncludeAndroidResources = true }
 }
 
 dependencies {
@@ -97,7 +99,34 @@ dependencies {
     implementation("androidx.car.app:app-projected:1.7.0")
     debugImplementation("androidx.compose.ui:ui-tooling")
 
+    testImplementation(composeBom)
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
     testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
+    // Integration tests: the real Android framework on the JVM (no emulator needed).
+    testImplementation("org.robolectric:robolectric:4.17")
+    testImplementation("androidx.test:core-ktx:1.7.0")
+    testImplementation("androidx.test.ext:junit-ktx:1.3.0")
+    testImplementation("androidx.compose.ui:ui-test-junit4")
+    testImplementation("androidx.work:work-testing:2.10.1")
+    debugImplementation("androidx.compose.ui:ui-test-manifest")
+}
+
+// Robolectric integration tests (src/test/.../integration) drive the real app on the
+// JVM. They get their own task with a fresh JVM per test class: the app and androidx
+// (ProcessLifecycleOwner, startup initializers) keep per-process state that
+// Robolectric cannot reset between tests, and Paparazzi's layoutlib JVM stays apart.
+val integrationTests = "app/hermesconduit/android/integration/**"
+tasks.withType<Test>().configureEach {
+    if (name != "integrationTestDebug") exclude(integrationTests)
+}
+tasks.register<Test>("integrationTestDebug") {
+    val debugUnitTest = tasks.named<Test>("testDebugUnitTest")
+    description = "Runs the Robolectric integration tests against the debug build."
+    group = "verification"
+    testClassesDirs = files(debugUnitTest.map { it.testClassesDirs })
+    classpath = files(debugUnitTest.map { it.classpath })
+    include(integrationTests)
+    forkEvery = 1
+    maxHeapSize = "2g"
 }

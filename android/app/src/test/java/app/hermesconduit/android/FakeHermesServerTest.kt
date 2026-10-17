@@ -1,6 +1,6 @@
 package app.hermesconduit.android
 
-import app.hermesconduit.android.model.ConduitJson
+import app.hermesconduit.android.integration.FakeHermes
 import app.hermesconduit.android.model.StreamEvent
 import app.hermesconduit.android.model.obj
 import app.hermesconduit.android.model.str
@@ -20,111 +20,45 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
-import okhttp3.Response
-import okhttp3.WebSocket
-import okhttp3.WebSocketListener
-import okhttp3.mockwebserver.Dispatcher
-import okhttp3.mockwebserver.MockResponse
-import okhttp3.mockwebserver.MockWebServer
-import okhttp3.mockwebserver.RecordedRequest
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
-import java.util.Collections
 
 /**
- * Drives the REST + JSON-RPC clients against a scripted stand-in for the
- * Hermes dashboard, covering sign-in, the ticketed socket and one streamed turn.
+ * Drives the REST + JSON-RPC clients against [FakeHermes], the scripted
+ * stand-in for the Hermes dashboard the Robolectric tests share, covering
+ * sign-in, the ticketed socket and one streamed turn.
  */
 class FakeHermesServerTest {
-    private val server = MockWebServer()
-    private val rpcLog: MutableList<String> = Collections.synchronizedList(mutableListOf())
-    private val requests: MutableList<RecordedRequest> = Collections.synchronizedList(mutableListOf())
+    private val fake = FakeHermes()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     @Before
     fun setUp() {
-        server.dispatcher = object : Dispatcher() {
-            override fun dispatch(request: RecordedRequest): MockResponse {
-                requests += request
-                val path = request.requestUrl!!.encodedPath
-                val cookie = request.getHeader("Cookie").orEmpty()
-                return when {
-                    path == "/api/auth/providers" -> json("""{"providers":[{"name":"basic","supports_password":true}]}""")
-                    path == "/auth/password-login" -> {
-                        val body = ConduitJson.parseToJsonElement(request.body.readUtf8()).obj!!
-                        if (body["password"].str == "right") {
-                            json("{}").addHeader("Set-Cookie", "hermes_session=abc; Path=/; HttpOnly")
-                        } else {
-                            MockResponse().setResponseCode(401)
-                        }
-                    }
-                    "hermes_session=abc" !in cookie && path.startsWith("/api/") && path != "/api/ws" ->
-                        MockResponse().setResponseCode(401)
-                    path == "/api/auth/ws-ticket" -> json("""{"ticket":"t-1"}""")
-                    path == "/api/profiles" -> json("""{"profiles":["work",{"name":"lab"}]}""")
-                    path == "/api/profiles/sessions" -> json(
-                        """{"sessions":[{"session_id":"rt","id":"st-1","title":"First","message_count":2,"last_active":1700000000}],"has_more":false,"total":1}""",
-                    )
-                    path == "/api/sessions/st-1/messages" -> json(
-                        """{"messages":[{"id":1,"role":"user","content":"hi"},{"id":2,"role":"assistant","content":"hello"}],"pagination":{"order":"latest"}}""",
-                    )
-                    path == "/api/ws" && request.requestUrl!!.queryParameter("ticket") == "t-1" ->
-                        MockResponse().withWebSocketUpgrade(gateway)
-                    else -> MockResponse().setResponseCode(404)
-                }
-            }
+        fake.histories["st-1"] = """[{"id":1,"role":"user","content":"hi"},{"id":2,"role":"assistant","content":"hello"}]"""
+        fake.turn = { _, _ ->
+            listOf(
+                "message.start" to "{}",
+                "tool.start" to """{"name":"terminal","tool_id":"c1","args_text":"ls"}""",
+                "tool.complete" to """{"name":"terminal","tool_id":"c1","output":"a.txt"}""",
+                "message.delta" to """{"text":"Done"}""",
+                "message.complete" to """{"message_id":"m1","content":"Done."}""",
+                "session.busy" to """{"busy":false}""",
+            )
         }
-        server.start()
+        fake.start()
     }
 
     @After
     fun tearDown() {
         scope.cancel()
-        server.shutdown()
+        fake.close()
     }
 
-    private fun json(body: String) = MockResponse().setHeader("Content-Type", "application/json").setBody(body)
-
-    private val gateway = object : WebSocketListener() {
-        override fun onOpen(webSocket: WebSocket, response: Response) {
-            webSocket.send("""{"jsonrpc":"2.0","method":"event","params":{"type":"gateway.ready","payload":{}}}""")
-        }
-
-        override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
-            webSocket.close(1000, null)
-        }
-
-        override fun onMessage(webSocket: WebSocket, text: String) {
-            val frame = ConduitJson.parseToJsonElement(text).obj!!
-            val method = frame["method"].str
-            val id = frame["id"].str
-            if (method == null) return
-            rpcLog += "$method ${frame["params"] ?: "{}"}"
-            fun reply(result: String) = webSocket.send("""{"jsonrpc":"2.0","id":$id,"result":$result}""")
-            fun event(type: String, payload: String) =
-                webSocket.send("""{"jsonrpc":"2.0","method":"event","params":{"type":"$type","session_id":"rt-new","payload":$payload}}""")
-            when (method) {
-                "client.capabilities" -> reply("""{"declines_not_shown":true}""")
-                "session.create" -> reply("""{"session_id":"rt-new","stored_session_id":"st-new"}""")
-                "prompt.submit" -> {
-                    reply("""{"status":"streaming"}""")
-                    event("message.start", "{}")
-                    event("tool.start", """{"name":"terminal","tool_id":"c1","args_text":"ls"}""")
-                    event("tool.complete", """{"name":"terminal","tool_id":"c1","output":"a.txt"}""")
-                    event("message.delta", """{"text":"Done"}""")
-                    event("message.complete", """{"message_id":"m1","content":"Done."}""")
-                    event("session.busy", """{"busy":false}""")
-                }
-                else -> webSocket.send("""{"jsonrpc":"2.0","id":$id,"error":{"code":-32601,"message":"unknown method"}}""")
-            }
-        }
-    }
-
-    private fun api() = DashboardApi(server.url("/").toString(), SessionCookieJar())
+    private fun api() = DashboardApi(fake.baseUrl + "/", SessionCookieJar())
 
     @Test
     fun wrongPasswordIsReported() = runBlocking<Unit> {
@@ -173,10 +107,10 @@ class FakeHermesServerTest {
             collected.map { it::class.simpleName },
         )
         // Capabilities go out unscoped; other calls carry the active profile.
-        assertTrue(rpcLog.any { it.startsWith("client.capabilities") && "profile" !in it && "server_requests" in it })
-        assertTrue(rpcLog.any { it.startsWith("prompt.submit") && "\"profile\":\"work\"" in it })
+        assertTrue(fake.calls("client.capabilities").any { "profile" !in it.params && "server_requests" in it.params })
+        assertTrue(fake.calls("prompt.submit").any { it.params["profile"].str == "work" })
         // Authenticated REST calls carried the session cookie.
-        assertTrue(requests.filter { it.path!!.startsWith("/api/profiles") }.all { "hermes_session=abc" in it.getHeader("Cookie").orEmpty() })
+        assertTrue(fake.requests.filter { it.path!!.startsWith("/api/profiles") }.all { "hermes_session=abc" in it.getHeader("Cookie").orEmpty() })
         client.close()
     }
 }

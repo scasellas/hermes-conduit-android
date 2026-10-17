@@ -385,8 +385,8 @@ internal fun ToolCallCard(call: ToolCall) {
         }
         AnimatedVisibility(expanded) {
             Column(Modifier.padding(top = 6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                call.input?.takeIf { it.isNotBlank() }?.let { CodeBlock("Input", it) }
-                call.output?.takeIf { it.isNotBlank() }?.let { CodeBlock("Output", it) }
+                call.input?.takeIf { it.isNotBlank() }?.let { CodeBlock(t("Input"), it) }
+                call.output?.takeIf { it.isNotBlank() }?.let { CodeBlock(t("Output"), it) }
             }
         }
     }
@@ -476,16 +476,16 @@ private fun ApprovalCard(approval: ApprovalRequest, onChoice: (String) -> Unit) 
         Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Default.Shield, null, tint = attentionColor(), modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(8.dp))
-            Text(approval.description ?: "Approval required", style = MaterialTheme.typography.titleSmall)
+            Text(approval.description ?: t("Approval required"), style = MaterialTheme.typography.titleSmall)
         }
-        approval.command?.takeIf { it.isNotBlank() }?.let { CodeBlock("Command", it) }
+        approval.command?.takeIf { it.isNotBlank() }?.let { CodeBlock(t("Command"), it) }
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             approval.choices.forEach { choice ->
                 val label = when (choice) {
-                    "once" -> "Allow once"
-                    "session" -> "Allow for chat"
-                    "always" -> "Always allow"
-                    "deny" -> "Deny"
+                    "once" -> t("Allow once")
+                    "session" -> t("Allow for chat")
+                    "always" -> t("Always allow")
+                    "deny" -> t("Deny")
                     else -> choice
                 }
                 if (choice == "deny") OutlinedButton(onClick = { onChoice(choice) }) { Text(label) }
