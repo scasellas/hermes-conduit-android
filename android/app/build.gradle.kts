@@ -105,6 +105,7 @@ dependencies {
     testImplementation("androidx.test:core-ktx:1.7.0")
     testImplementation("androidx.test.ext:junit-ktx:1.3.0")
     testImplementation("androidx.compose.ui:ui-test-junit4")
+    testImplementation("androidx.work:work-testing:2.10.1")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
 }
 
