@@ -10,6 +10,8 @@ import app.hermesconduit.android.hermes
 import app.hermesconduit.android.model.ApprovalRequest
 import app.hermesconduit.android.model.ContentSegmenter
 import app.hermesconduit.android.model.MessageNormalizer
+import app.hermesconduit.android.model.PushAction
+import app.hermesconduit.android.model.PushE2E
 import app.hermesconduit.android.model.SessionSummary
 import app.hermesconduit.android.model.StreamEvent
 import app.hermesconduit.android.model.obj
@@ -29,7 +31,9 @@ import kotlinx.serialization.json.put
  * progress notification while a turn runs).
  *
  * Events cover the chats this device has open on the socket; a periodic
- * `session.active_list` + `approval.pending` sweep covers the others.
+ * `session.active_list` + `approval.pending` sweep covers the others. With
+ * Conduit closed, a UnifiedPush message brings the same notifications
+ * ([pushed]) or wakes the socket for one sweep ([sweepNow]).
  */
 class NotificationMonitor(private val context: Context) {
     private val hermes = context.hermes
@@ -111,6 +115,40 @@ class NotificationMonitor(private val context: Context) {
         }
     }
 
+    /**
+     * One sweep now (a push woke Conduit and the socket is back): what the
+     * 60-second loop would have found, without waiting for it.
+     */
+    suspend fun sweepNow() {
+        if (enabled) runCatching { sweep() }
+    }
+
+    /**
+     * A notification a push carried (UnifiedPush, `push/ConduitPushHandler`),
+     * posted as the socket would have posted it: same channels, actions and
+     * ids, so a push and a live event for the same thing end up as one.
+     */
+    fun pushed(push: PushAction.Notify) {
+        val sid = push.sessionId
+        if (!shouldNotify(sid)) return
+        val dashboard = push.dashboardId ?: hermes.connection.value?.id
+        val profile = push.profile ?: hermes.profile.value
+        val previews = pref(NotificationPrefs.PREVIEWS)
+        val (genericTitle, genericBody) = PushE2E.genericCopy(push.type)
+        val title = (if (previews) push.title else null) ?: L10n.tr(genericTitle)
+        val body = (if (previews) push.body else null) ?: L10n.tr(genericBody)
+        when (push.type) {
+            "approval.needed" -> if (pref(NotificationPrefs.APPROVAL)) {
+                val request = push.approval?.takeIf { pref(NotificationPrefs.DECISION_CARDS) }
+                if (request != null) approval(request, dashboard, profile) else attention(sid, title, body, dashboard, profile)
+            }
+            "input.needed" -> if (pref(NotificationPrefs.INPUT)) attention(sid, title, body, dashboard, profile)
+            "turn.failed" -> if (pref(NotificationPrefs.FAILED)) completion(sid, title, body, dashboard, profile)
+            "background_task.finished" -> if (pref(NotificationPrefs.BACKGROUND_TASK)) completion(sid, title, body, dashboard, profile)
+            else -> if (pref(NotificationPrefs.RESPONSE) && sourceAllowed(sid)) completion(sid, title, body, dashboard, profile)
+        }
+    }
+
     /** Sessions this socket isn't attached to: their status edges and pending approvals. */
     private suspend fun sweep() {
         val result = hermes.rpc("session.active_list", buildJsonObject {}).obj ?: return
@@ -143,10 +181,10 @@ class NotificationMonitor(private val context: Context) {
         }
     }
 
-    private fun open(sid: String): PendingIntent =
-        ConduitNotifications.openIntent(context, sid, title(sid), hermes.connection.value?.id, hermes.profile.value)
+    private fun open(sid: String, dashboard: String? = hermes.connection.value?.id, profile: String? = hermes.profile.value): PendingIntent =
+        ConduitNotifications.openIntent(context, sid, title(sid), dashboard, profile)
 
-    private fun approval(request: ApprovalRequest) {
+    private fun approval(request: ApprovalRequest, dashboard: String? = hermes.connection.value?.id, profile: String? = hermes.profile.value) {
         val key = request.requestId.ifEmpty { request.sessionId }
         if (!notifiedApprovals.add(key)) return
         val id = ConduitNotifications.idFor("approval", key)
@@ -158,7 +196,7 @@ class NotificationMonitor(private val context: Context) {
             .setStyle(NotificationCompat.BigTextStyle().bigText(if (cards) listOfNotNull(request.description, request.command).joinToString("\n") else title(request.sessionId)))
             .setCategory(NotificationCompat.CATEGORY_REMINDER)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .setContentIntent(open(request.sessionId))
+            .setContentIntent(open(request.sessionId, dashboard, profile))
             .setAutoCancel(true)
         if (cards) {
             request.choices.filter { it == "once" || it == "deny" || it == "session" }.forEach { choice ->
@@ -176,16 +214,16 @@ class NotificationMonitor(private val context: Context) {
         ConduitNotifications.post(context, id, builder.build())
     }
 
-    private fun attention(sid: String, title: String, text: String?) {
+    private fun attention(sid: String, title: String, text: String?, dashboard: String? = hermes.connection.value?.id, profile: String? = hermes.profile.value) {
         val channel = if (pref(NotificationPrefs.ATTENTION_SOUND)) ConduitNotifications.CHANNEL_ATTENTION else ConduitNotifications.CHANNEL_ATTENTION_QUIET
         ConduitNotifications.post(
             context, ConduitNotifications.idFor("attention", sid),
             ConduitNotifications.builder(context, channel).setContentTitle(title).setContentText(text ?: title(sid))
-                .setSubText(title(sid)).setContentIntent(open(sid)).setAutoCancel(true).setPriority(NotificationCompat.PRIORITY_HIGH).build(),
+                .setSubText(title(sid)).setContentIntent(open(sid, dashboard, profile)).setAutoCancel(true).setPriority(NotificationCompat.PRIORITY_HIGH).build(),
         )
     }
 
-    private fun completion(sid: String, title: String, text: String?) {
+    private fun completion(sid: String, title: String, text: String?, dashboard: String? = hermes.connection.value?.id, profile: String? = hermes.profile.value) {
         val channel = if (pref(NotificationPrefs.COMPLETION_SOUND)) ConduitNotifications.CHANNEL_COMPLETION else ConduitNotifications.CHANNEL_COMPLETION_QUIET
         val id = ConduitNotifications.idFor("done", sid)
         // MessagingStyle with Reply and Mark as read: Android Auto and Wear OS
@@ -219,7 +257,7 @@ class NotificationMonitor(private val context: Context) {
                 .setContentTitle(title)
                 .setContentText(text)
                 .setCategory(NotificationCompat.CATEGORY_MESSAGE)
-                .setContentIntent(open(sid))
+                .setContentIntent(open(sid, dashboard, profile))
                 .addAction(reply)
                 .addInvisibleAction(read)
                 .setAutoCancel(true)

@@ -441,9 +441,9 @@ data class LocationBatch(
     val events: List<LocationPlaceEvent> = emptyList(),
     val locateID: String? = null,
     /**
-     * What this phone can answer for the host (`sharing.features`). Android
-     * gets no location pushes, so the host can't ask it for maps lookups:
-     * none by default (iOS sends "maps").
+     * What this phone can answer for the host (`sharing.features`). Without
+     * push wake-up (UnifiedPush) the host can't ask it for maps lookups: none
+     * by default; "maps" once pushes reach it, as iOS always sends.
      */
     val features: List<String> = PHONE_FEATURES,
 ) {
@@ -707,9 +707,10 @@ data class LocationRule(
 
 /**
  * The agent's on-demand locate (iOS LocationLocateRequest). On iOS it comes
- * as a location push the relay sends; Android has no push relay, so this
- * only reads a plain `conduit` routing stub (for a future delivery path)
- * and decides whether this phone answers it.
+ * as a location push the relay sends; on Android as a UnifiedPush message,
+ * whose verified routing payload (`push/ConduitPushHandler`) is read here the
+ * way a plain `conduit` routing stub is, and this decides whether this phone
+ * answers it.
  */
 data class LocationLocateRequest(val id: String, val profile: String?, val gatewayID: String?, val dashboardID: String?, val kind: String = LOCATE) {
     fun isForBinding(config: LocationSharedConfig): Boolean {

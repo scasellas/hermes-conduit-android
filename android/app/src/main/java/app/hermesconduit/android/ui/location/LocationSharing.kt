@@ -10,8 +10,10 @@ import app.hermesconduit.android.hermes
 import app.hermesconduit.android.model.LiveVoiceMode
 import app.hermesconduit.android.model.LocationBatch
 import app.hermesconduit.android.model.LocationBinding
+import app.hermesconduit.android.model.LocationCrypto
 import app.hermesconduit.android.model.LocationFixRecord
 import app.hermesconduit.android.model.LocationFixSource
+import app.hermesconduit.android.model.LocationLocateRequest
 import app.hermesconduit.android.model.LocationPlaceEvent
 import app.hermesconduit.android.model.LocationPrecision
 import app.hermesconduit.android.model.LocationRawFix
@@ -20,10 +22,15 @@ import app.hermesconduit.android.model.LocationSessionKey
 import app.hermesconduit.android.model.LocationSharedConfig
 import app.hermesconduit.android.model.LocationSharingSettings
 import app.hermesconduit.android.model.LocationUnsent
+import app.hermesconduit.android.model.MapsAnswer
+import app.hermesconduit.android.model.MapsFailure
+import app.hermesconduit.android.model.MapsRequest
+import app.hermesconduit.android.model.str
 import app.hermesconduit.android.notify.ForegroundState
 import app.hermesconduit.android.ui.device.DeviceSharing
 import app.hermesconduit.android.ui.device.NotReadyException
 import app.hermesconduit.android.ui.device.SyncRequest
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -33,6 +40,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
+
+/** A maps lookup on this phone ([MapsEngine.answer]): request, "me", saved places, deadline. */
+typealias MapsLookup = suspend (MapsRequest, MapsMe?, List<LocationSavedPlace>, Long) -> MapsAnswer
 
 class LocationPermissionException : Exception(
     L10n.tr("Conduit doesn't have permission to use your location. Allow it in the Settings app under Apps > Conduit > Permissions > Location."),
@@ -55,8 +65,10 @@ object LocationTiming {
  * sharing is paused. A message never waits more than [LocationTiming.TALKING_WAIT_MS].
  *
  * The agent's on-demand locate and maps requests reach an iPhone as a
- * location push through the relay; Android has no push relay, so Hermes
- * uses the last position sent (Settings says so).
+ * location push through the relay. Android gets them as a UnifiedPush
+ * message when push is set up in Settings > Notifications ([answerLocate],
+ * [answerMaps]); without it Hermes uses the last position sent (Settings says
+ * so).
  */
 class LocationSharing internal constructor(
     private val configStore: TextStore,
@@ -68,6 +80,11 @@ class LocationSharing internal constructor(
     /** The connection to a binding's dashboard, or null when there is none. */
     var requestProvider: (LocationBinding) -> SyncRequest? = { null },
     var now: () -> Long = { System.currentTimeMillis() },
+    /**
+     * What this phone answers for the host (`sharing.features`): "maps" once
+     * pushes can wake it for the bound dashboard, none before.
+     */
+    var phoneFeatures: (LocationBinding) -> List<String> = { LocationBatch.PHONE_FEATURES },
 ) {
     private val _config: MutableStateFlow<LocationSharedConfig>
     val config: StateFlow<LocationSharedConfig> get() = _config
@@ -309,6 +326,7 @@ class LocationSharing internal constructor(
             knownPlaces = config.places,
             fix = pending.fix,
             events = pending.events,
+            features = phoneFeatures(binding),
         )
         _isSending.value = true
         val outcome = try {
@@ -323,6 +341,104 @@ class LocationSharing internal constructor(
         unsent = unsent.removing(pending.fix?.id, pending.events.map { it.id }.toSet())
         saveUnsent()
         return outcome == LocationSyncEngine.SendOutcome.SENT
+    }
+
+    // endregion
+
+    // region Requests by push
+
+    /**
+     * The agent's on-demand locate, delivered by push (iOS
+     * LocationPushService.answer): only for the dashboard and profile sharing
+     * is bound to, while background sharing is on and not paused. One fix at
+     * the background precision, sent with its `locate_id`. True when the host
+     * has it.
+     */
+    suspend fun answerLocate(request: LocationLocateRequest): Boolean {
+        if (_configUnreadable.value || request.kind != LocationLocateRequest.LOCATE) return false
+        val config = _config.value
+        if (!request.isAnswered(config, now())) return false
+        val binding = config.binding ?: return false
+        val hostRequest = requestProvider(binding) ?: return false
+        val provider = fixes ?: return false
+        val precision = config.settings.backgroundPrecision
+        val raw = provider.currentFix(precision, LOCATE_FIX_MAX_AGE_S, LOCATE_FIX_TIMEOUT_MS) ?: return false
+        // The area is a nicety: sent only if the geocoder answers quickly.
+        val area = if (precision == LocationPrecision.PLACES) null else provider.area(raw)
+        val batch = LocationBatch(
+            sentAtMs = now(),
+            settings = config.settings,
+            approximateOnly = approximate || config.approximateOnly,
+            places = config.places,
+            knownPlaces = config.places,
+            fix = LocationFixRecord(source = LocationFixSource.LOCATE, raw = raw, area = area),
+            locateID = request.id,
+            features = phoneFeatures(binding),
+        )
+        val outcome = sendMutex.withLock { engine.send(batch, config, hostRequest) }
+        return outcome == LocationSyncEngine.SendOutcome.SENT
+    }
+
+    /**
+     * A maps request, delivered by push (iOS LocationPushService.answerMaps,
+     * designs/maps-v1-contract.md sections 2-4): fetched sealed from the host,
+     * answered on this phone, and the sealed answer posted back. While
+     * sharing is paused or the background layer is off the answer is
+     * "paused". `lookup` is [MapsEngine.answer]. True when the host took the answer.
+     */
+    suspend fun answerMaps(request: LocationLocateRequest, lookup: MapsLookup): Boolean {
+        if (_configUnreadable.value || request.kind != LocationLocateRequest.MAPS || !LocationLocateRequest.isMapsID(request.id)) return false
+        val config = _config.value
+        if (!request.isForBinding(config)) return false
+        val binding = config.binding ?: return false
+        val key = engine.keys.load()?.takeIf { it.deviceID == config.deviceID && it.answersMaps } ?: return false
+        if (!wireID.matches(key.deviceID) || !wireID.matches(key.kid)) return false
+        val hostRequest = requestProvider(binding) ?: return false
+        val path = "${LocationSyncEngine.BASE}/maps/${request.id}"
+        val sealed = try {
+            hostRequest("GET", path, mapOf("device_id" to key.deviceID, "kid" to key.kid), null)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            // Expired, answered, another device's, or the host is away: nothing to answer.
+            return false
+        }
+        val body = runCatching { LocationCrypto.openMapsRequest(sealed, key, request.id) }.getOrNull()
+            ?.takeIf { it["id"].str == request.id } ?: return false
+        val answer = MapsRequest.parse(body).fold(
+            onSuccess = { parsed ->
+                // Too late: the host refuses answers after expires_at.
+                if (parsed.expiresAt != null && parsed.expiresAt.toEpochMilli() < now()) return false
+                runMaps(parsed, config, lookup)
+            },
+            onFailure = { MapsAnswer.Failed(it as? MapsFailure ?: MapsFailure.failed()) },
+        )
+        val envelope = LocationCrypto.mapsAnswer(answer.plaintext(request.id), key, request.id)
+        return try {
+            hostRequest("POST", path, emptyMap(), envelope)
+            true
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    /** The answer, with "me" at the background precision (or approximate, whichever is stricter). */
+    private suspend fun runMaps(request: MapsRequest, config: LocationSharedConfig, lookup: MapsLookup): MapsAnswer {
+        if (!config.settings.shares(LocationFixSource.LOCATE, now())) return MapsAnswer.Failed(MapsFailure.PAUSED)
+        var me: MapsMe? = null
+        if (request.usesMe) {
+            var precision = config.settings.backgroundPrecision
+            if (config.approximateOnly) precision = precision.capped(LocationPrecision.AREA)
+            me = if (precision == LocationPrecision.PLACES) {
+                MapsMe.Unavailable(MapsFailure.noLocation(MapsFailure.PLACES_ONLY))
+            } else {
+                val raw = fixes?.currentFix(precision, LOCATE_FIX_MAX_AGE_S, LOCATE_FIX_TIMEOUT_MS)
+                if (raw != null) MapsMe.At(raw, if (approximate) precision.capped(LocationPrecision.AREA) else precision) else MapsMe.Unavailable(MapsFailure.noLocation())
+            }
+        }
+        return lookup(request, me, config.places, MAPS_LOOKUP_DEADLINE_MS)
     }
 
     // endregion
@@ -490,6 +606,12 @@ class LocationSharing internal constructor(
         const val CAPABILITY = "location-sync"
         const val LOCATE_CAPABILITY = "location-locate"
         const val LOCATION_VOICE_VERSION = "0.28.0"
+        /** The whole answer has to fit the host's wait (iOS: fix 6 s, maps lookup 5 s). */
+        const val LOCATE_FIX_TIMEOUT_MS = 8_000L
+        const val LOCATE_FIX_MAX_AGE_S = 30L
+        const val MAPS_LOOKUP_DEADLINE_MS = 5_000L
+        /** Ids that go into a query string as they are. */
+        private val wireID = Regex("^[A-Za-z0-9_-]{1,80}$")
 
         /** Whether the running plugin answers live voice reads of the location (older ones serve health only). */
         fun servesLocationVoice(status: app.hermesconduit.android.model.PluginStatus): Boolean =
@@ -515,6 +637,9 @@ class LocationSharing internal constructor(
                 scope = context.hermes.scope,
             )
             sharing.requestProvider = { binding -> DeviceSharing.request(context, binding.dashboardID, binding.profile) }
+            sharing.phoneFeatures = { binding ->
+                if (app.hermesconduit.android.push.ConduitPush.get(context).wakes(binding.dashboardID, binding.profile)) listOf("maps") else LocationBatch.PHONE_FEATURES
+            }
             return sharing
         }
 

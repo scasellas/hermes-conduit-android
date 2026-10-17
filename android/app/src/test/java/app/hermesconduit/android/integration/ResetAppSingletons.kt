@@ -37,6 +37,9 @@ class ResetAppSingletons : TestEnvironmentLifecyclePlugin {
             "$APP.ui.phone.PhoneSync" to "instance",
             "$APP.ui.phone.ConduitAlarms" to "instance",
             "$APP.calls.HermesCalls" to "instance",
+            "$APP.push.ConduitPush" to "instance",
+            // Holds the previous test's (reset) preferences file open otherwise.
+            "$APP.data.DeviceKeyStore" to "prefs",
             "$APP.wake.WakePhrase" to "instance",
             "$APP.core.ProfileAppearance" to "instance",
             "$APP.ui.device.DeviceSharing" to "started",

@@ -14,7 +14,7 @@ A native Android client for [Hermes Agent](https://github.com/NousResearch/herme
 | **Decisions** | Approvals, clarify questions, masked sudo/secret/vault prompts, chat takeover from Desktop or the terminal, presented confirm panels (with maps navigation), Let Hermes change settings |
 | **Hermes features** | Bot Mode and group chats, Kanban, Capabilities (skills, tools, MCP connectors, plugins), scheduled jobs, artifacts, workspace browser, gateway diagnostics, logs and restart, Conduit plugin install/update |
 | **Settings** | Profile config pages (Chat, Workspace & safety, Memory & delegation, Model defaults), profiles manager (order, photos, background glow), appearance (language, theme, app icon), notifications, saved dashboards, connection log, about |
-| **Notifications** | Background gateway connection (the push relay is APNs-only) with approval/input/response/failure/background-task notifications, Allow/Deny and Reply actions, live progress notification |
+| **Notifications** | Background gateway connection (the push relay is APNs-only), or push wake-up through UnifiedPush with a supporting notifier plugin (`docs/ANDROID_PUSH.md`), with approval/input/response/failure/background-task notifications, Allow/Deny and Reply actions, live progress notification |
 | **Platform** | `conduit://` links, share target, “Ask Hermes” text action, launcher shortcuts, Quick Settings tile, home-screen widgets, digital assistant “Ask Hermes about screen”, Android Auto and Wear OS replies through messaging notifications |
 | **Languages** | The 14 iOS languages, from the iOS String Catalogs |
 

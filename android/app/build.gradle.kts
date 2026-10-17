@@ -87,8 +87,14 @@ dependencies {
     implementation("androidx.health.connect:connect-client:1.1.0-alpha12")
     implementation("com.google.android.gms:play-services-location:21.3.0")
     implementation("androidx.work:work-runtime-ktx:2.10.1")
-    // X25519, HKDF and ChaCha20-Poly1305 for the sealed uploads (already pulled in by security-crypto).
-    implementation("com.google.crypto.tink:tink-android:1.8.0")
+    // X25519, HKDF and ChaCha20-Poly1305 for the sealed uploads and pushes (security-crypto pulls in an
+    // older one). 1.23.0 is what the UnifiedPush connector's Web Push decryption is built against.
+    implementation("com.google.crypto.tink:tink-android:1.23.0")
+    // Push wake-up through UnifiedPush (ntfy and other distributors). The connector depends on the
+    // JVM `tink` artifact, which duplicates tink-android's classes: the Android one above serves it.
+    implementation("org.unifiedpush.android:connector:3.3.5") {
+        exclude(group = "com.google.crypto.tink", module = "tink")
+    }
     // Wake phrase: on-device keyword spotting, and unpacking the model archive (.tar.bz2).
     implementation("com.github.k2-fsa.sherpa-onnx:sherpa-onnx:v1.13.8@aar")
     implementation("org.apache.commons:commons-compress:1.27.1")

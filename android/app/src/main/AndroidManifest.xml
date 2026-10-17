@@ -243,6 +243,14 @@
             android:name=".notify.ConnectionService"
             android:exported="false"
             android:foregroundServiceType="remoteMessaging" />
+        <!-- UnifiedPush (connector 3): the library's receiver forwards the distributor's events here. -->
+        <service
+            android:name=".push.ConduitPushService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="org.unifiedpush.android.connector.PUSH_EVENT" />
+            </intent-filter>
+        </service>
         <receiver
             android:name=".notify.NotificationActionReceiver"
             android:exported="false" />

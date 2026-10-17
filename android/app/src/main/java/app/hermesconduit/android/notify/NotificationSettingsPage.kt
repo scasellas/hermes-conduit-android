@@ -77,6 +77,7 @@ fun NotificationSettingsPage(onBack: () -> Unit) {
                     ConnectionService.sync(context)
                 }, icon = Icons.Default.NotificationsActive)
             }
+            app.hermesconduit.android.push.UnifiedPushSection()
             val progress by settings.bool(NotificationPrefs.PROGRESS, true).collectAsStateWithLifecycle()
             SettingsSection(t("Lock Screen")) {
                 SettingsToggle(

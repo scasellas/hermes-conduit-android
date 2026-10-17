@@ -145,6 +145,17 @@ class HermesCalls private constructor(private val context: Context) {
         incoming(withDashboard, source = "socket")
     }
 
+    /**
+     * A `call.requested` that came as a verified push (UnifiedPush, while
+     * Conduit may have been closed; iOS's VoIP push). It rings once: the same
+     * call arriving on the socket as well is the same ring.
+     */
+    fun pushed(target: HermesCallTarget) {
+        val withDashboard = if (target.dashboardID == null) target.copy(dashboardID = dashboardId) else target
+        if (!detector.socketCall(withDashboard.sessionId, System.currentTimeMillis())) return
+        incoming(withDashboard, source = "push")
+    }
+
     /** The sweep saw a session go idle (chats this socket isn't attached to). */
     fun sessionIdle(sessionId: String) {
         detector.turnEnded(sessionId, System.currentTimeMillis())?.let(::place)

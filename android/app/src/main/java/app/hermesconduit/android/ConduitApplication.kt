@@ -17,6 +17,7 @@ class ConduitApplication : Application() {
         app.hermesconduit.android.core.Haptics.init(this)
         app.hermesconduit.android.notify.ForegroundState.install()
         notifications.start()
+        app.hermesconduit.android.push.ConduitPush.get(this).install()
         app.hermesconduit.android.notify.ConnectionService.sync(this)
         app.hermesconduit.android.ui.voice.VoiceHub.install(this)
         app.hermesconduit.android.ui.device.DeviceSharing.start(this)
