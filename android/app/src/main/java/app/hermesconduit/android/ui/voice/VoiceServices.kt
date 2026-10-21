@@ -1,5 +1,6 @@
 package app.hermesconduit.android.ui.voice
 
+import android.Manifest
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -7,12 +8,14 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.media.MediaMetadata
 import android.media.session.MediaSession
 import android.media.session.PlaybackState
 import android.os.Build
 import android.os.IBinder
+import androidx.core.content.ContextCompat
 import app.hermesconduit.android.MainActivity
 import app.hermesconduit.android.R
 import app.hermesconduit.android.core.L10n
@@ -37,6 +40,66 @@ internal object VoiceNotifications {
 
     fun builder(context: Context): Notification.Builder =
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) Notification.Builder(context, CHANNEL) else @Suppress("DEPRECATION") Notification.Builder(context)
+}
+
+/**
+ * Android's contract for `startForegroundService`: the service must call
+ * `startForeground` once its start arrives, and must not be brought down
+ * before then, or the system kills the app with "Context.startForegroundService()
+ * did not then call Service.startForeground()". So a stop asked for while a
+ * start is still on its way is held until the service has gone foreground,
+ * and a service that can't keep its notification still enters the foreground
+ * before it stops itself.
+ */
+internal class ForegroundStarts(private val service: Class<out Service>) {
+    /** Starts requested that the service hasn't received yet. */
+    @Volatile private var pending = 0
+    @Volatile private var stopRequested = false
+
+    fun start(context: Context, intent: Intent = Intent(context, service)): Boolean {
+        intent.putExtra(EXTRA_FOREGROUND_START, true)
+        pending++
+        stopRequested = false
+        val started = runCatching { context.startForegroundService(intent) }.isSuccess
+        if (!started) pending = maxOf(0, pending - 1)
+        return started
+    }
+
+    fun stop(context: Context) {
+        if (pending > 0) stopRequested = true else context.stopService(Intent(context, service))
+    }
+
+    /** For `onStartCommand`: whether [intent] is a start that has to enter the foreground. */
+    fun isForegroundStart(intent: Intent?): Boolean = intent?.getBooleanExtra(EXTRA_FOREGROUND_START, false) == true
+
+    /** The service received [intent] and went foreground: true when it should stop now (a stop came while it was on its way). */
+    fun delivered(intent: Intent?): Boolean {
+        if (!isForegroundStart(intent)) return false
+        pending = maxOf(0, pending - 1)
+        if (pending > 0 || !stopRequested) return false
+        stopRequested = false
+        return true
+    }
+
+    private companion object {
+        const val EXTRA_FOREGROUND_START = "conduit.foregroundStart"
+    }
+}
+
+/**
+ * Enters the foreground with the first of [types] the system allows; no
+ * types (or before Android 10) uses the manifest's. Returns the type it went
+ * foreground with (0 for the manifest's), or null when the system refused.
+ */
+internal fun Service.enterForeground(id: Int, notification: Notification, vararg types: Int): Int? {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q || types.isEmpty()) return runCatching { startForeground(id, notification) }.map { 0 }.getOrNull()
+    return types.firstOrNull { type -> runCatching { startForeground(id, notification, type) }.isSuccess }
+}
+
+/** Leaves the foreground and stops: after [enterForeground], so the system's start contract is kept. */
+internal fun Service.stopForegroundAndSelf() {
+    runCatching { stopForeground(Service.STOP_FOREGROUND_REMOVE) }
+    stopSelf()
 }
 
 /**
@@ -71,8 +134,7 @@ class ReadAloudMediaSession(private val context: Context) : ReadAloudNowPlaying 
         session = media
         publishState()
         current = this
-        runCatching { context.startForegroundService(Intent(context, ReadAloudService::class.java)) }
-            .onFailure { runCatching { context.startService(Intent(context, ReadAloudService::class.java)) } }
+        if (!ReadAloudService.starts.start(context)) runCatching { context.startService(Intent(context, ReadAloudService::class.java)) }
     }
 
     override fun setPaused(paused: Boolean) {
@@ -89,7 +151,7 @@ class ReadAloudMediaSession(private val context: Context) : ReadAloudNowPlaying 
         media.isActive = false
         media.release()
         if (current === this) current = null
-        context.stopService(Intent(context, ReadAloudService::class.java))
+        ReadAloudService.starts.stop(context)
     }
 
     private fun publishState() {
@@ -148,27 +210,38 @@ class ReadAloudMediaSession(private val context: Context) : ReadAloudNowPlaying 
 class ReadAloudService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
+    // The type applies from Android 10 only (enterForeground).
+    @android.annotation.SuppressLint("InlinedApi")
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val session = ReadAloudMediaSession.current
         if (session == null) {
-            stopSelf()
+            // Read Aloud ended before its start arrived: go foreground anyway, then stop.
+            if (starts.isForegroundStart(intent)) {
+                VoiceNotifications.ensureChannel(this)
+                val placeholder = VoiceNotifications.builder(this).setSmallIcon(R.mipmap.ic_launcher).setContentTitle(L10n.tr("Read Aloud")).build()
+                enterForeground(VoiceNotifications.READ_ALOUD_ID, placeholder, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
+                starts.delivered(intent)
+                stopForegroundAndSelf()
+            } else {
+                stopSelf()
+            }
             return START_NOT_STICKY
         }
         intent?.action?.let { session.handle(it) }
-        val notification = session.notification()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            runCatching { startForeground(VoiceNotifications.READ_ALOUD_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK) }
-        } else {
-            runCatching { startForeground(VoiceNotifications.READ_ALOUD_ID, notification) }
-        }
+        val entered = enterForeground(VoiceNotifications.READ_ALOUD_ID, session.notification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
+        if (starts.delivered(intent) || entered == null) stopForegroundAndSelf()
         return START_NOT_STICKY
+    }
+
+    companion object {
+        internal val starts = ForegroundStarts(ReadAloudService::class.java)
     }
 }
 
 /**
- * "Keep listening when locked": a microphone foreground service while a
- * classic voice conversation is open, so capture keeps running hands-free
- * with the phone locked or Conduit in the background.
+ * "Keep listening when locked" and live calls: a microphone foreground
+ * service while a voice conversation is open, so capture keeps running
+ * hands-free with the phone locked or Conduit in the background.
  */
 class VoiceConversationService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
@@ -195,30 +268,39 @@ class VoiceConversationService : Service() {
             .setOngoing(true)
             .addAction(end)
             .build()
-        val started = runCatching {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                startForeground(VoiceNotifications.CONVERSATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE or ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
-            } else {
-                startForeground(VoiceNotifications.CONVERSATION_ID, notification)
-            }
+        // Android 14+ refuses the microphone type without RECORD_AUDIO or with Conduit in the background:
+        // the service then goes foreground for playback only, to keep the start contract, and stops.
+        val microphone = hasMicrophonePermission(this)
+        val types = when {
+            Build.VERSION.SDK_INT < Build.VERSION_CODES.R -> intArrayOf()
+            microphone -> intArrayOf(ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE or ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
+            else -> intArrayOf(ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
         }
-        if (started.isFailure) stopSelf()
+        val entered = enterForeground(VoiceNotifications.CONVERSATION_ID, notification, *types)
+        val listens = entered != null && (Build.VERSION.SDK_INT < Build.VERSION_CODES.R || entered and ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE != 0)
+        if (starts.delivered(intent) || !listens) stopForegroundAndSelf()
         return START_NOT_STICKY
     }
 
     companion object {
         const val ACTION_END = "conduit.voice.end"
         const val EXTRA_MODE = "conduit.voice.mode"
+        internal val starts = ForegroundStarts(VoiceConversationService::class.java)
 
-        /** `mode` names a live call's mode in the notification; null is the classic conversation. */
+        private fun hasMicrophonePermission(context: Context) =
+            ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+
+        /**
+         * `mode` names a live call's mode in the notification; null is the classic conversation.
+         * Nothing starts without the microphone permission: a microphone foreground service needs it.
+         */
         fun start(context: Context, mode: String? = null) {
+            if (!hasMicrophonePermission(context)) return
             val intent = Intent(context, VoiceConversationService::class.java)
             if (mode != null) intent.putExtra(EXTRA_MODE, mode)
-            runCatching { context.startForegroundService(intent) }
+            starts.start(context, intent)
         }
 
-        fun stop(context: Context) {
-            context.stopService(Intent(context, VoiceConversationService::class.java))
-        }
+        fun stop(context: Context) = starts.stop(context)
     }
 }

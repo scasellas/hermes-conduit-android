@@ -12,6 +12,7 @@ import androidx.compose.material.icons.filled.CallEnd
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
+import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -26,6 +27,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.hermesconduit.android.core.AppLink
@@ -36,6 +38,8 @@ import app.hermesconduit.android.model.ClarifyRequest
 import app.hermesconduit.android.ui.AppViewModel
 import app.hermesconduit.android.ui.ChatState
 import app.hermesconduit.android.ui.LocalNavigate
+import app.hermesconduit.android.ui.components.ScreenScaffold
+import app.hermesconduit.android.ui.components.SettingsColumn
 import app.hermesconduit.android.ui.nav.activityAppViewModel
 import app.hermesconduit.android.ui.voice.VoiceConversationScreen
 import app.hermesconduit.android.ui.voice.VoiceHub
@@ -86,17 +90,52 @@ internal fun BindChatHost() {
 
 /**
  * The voice route: the live call screen when a live call is open or the
- * profile uses a live mode, the classic conversation otherwise.
+ * profile uses a live mode, the classic conversation otherwise. With voice
+ * off for the profile (or signed out) and nothing open, it says so and
+ * points to Settings > Voice, as iOS does, before asking for the
+ * microphone or starting any audio.
  */
 @Composable
 fun VoiceEntryScreen(onBack: () -> Unit, navigate: (String) -> Unit) {
     val context = LocalContext.current
     val hub = remember { VoiceHub.get(context) }
     val open by hub.liveCalls.mode.collectAsState()
+    val conversationOpen by hub.conversationOpen.collectAsState()
     hub.preferencesVersion.collectAsState().value
+    hub.hermes.connection.collectAsState().value
+    val issue = VoiceEntry.setupIssue(hub.hermes.isSignedIn, hub.isVoiceEnabled(), somethingOpen = open != null || conversationOpen)
+    if (issue != null) {
+        VoiceOffScreen(issue, onBack, navigate)
+        return
+    }
     val mode = open ?: hub.liveCalls.enabledMode()
     BindChatHost()
     if (mode == null) VoiceConversationScreen(onBack, navigate) else LiveVoiceCallScreen(mode, onBack)
+}
+
+/** What keeps the voice route from starting a conversation (iOS `VoiceSetupIssue`). */
+object VoiceEntry {
+    /** Why voice can't start, or null. A call or conversation already open is always shown. */
+    fun setupIssue(signedIn: Boolean, voiceEnabled: Boolean, somethingOpen: Boolean): String? = when {
+        somethingOpen -> null
+        !signedIn -> L10n.tr("Connect to Hermes before starting voice.")
+        !voiceEnabled -> VoiceHub.VOICE_OFF
+        else -> null
+    }
+}
+
+/** Voice is off for this profile: no microphone request, no call, and the way to turn it on. */
+@Composable
+private fun VoiceOffScreen(reason: String, onBack: () -> Unit, navigate: (String) -> Unit) {
+    ScreenScaffold(title = t("Voice conversation"), onBack = onBack) { padding ->
+        SettingsColumn(padding) {
+            Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Icon(Icons.Default.MicOff, null, Modifier.size(48.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(reason, style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Center)
+                Button(onClick = { navigate("settings.voice") }) { Text(t("Open Settings")) }
+            }
+        }
+    }
 }
 
 /**
