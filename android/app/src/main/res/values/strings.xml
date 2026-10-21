@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Conduit</string>
+    <string name="shortcut_new_chat">New chat</string>
+    <string name="shortcut_voice">Talk to Hermes</string>
+    <string name="process_text_label">Ask Hermes</string>
+    <string name="tile_label">Ask Hermes</string>
+    <string name="widget_native_name">Native</string>
+    <string name="widget_native_description">Open your workspace, start a new chat, or talk with Conduit.</string>
+    <string name="widget_character_name">Conduit-chan</string>
+    <string name="widget_character_description">Open your workspace, start a new chat, or talk with Conduit-chan.</string>
+</resources>
